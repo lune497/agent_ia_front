@@ -1,0 +1,97 @@
+.sidebar {
+  width: 290px;
+  background: linear-gradient(135deg, #010106 0%, #7c3aed 100%);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem 1rem;
+  box-shadow: 0 4px 24px rgba(99,102,241,0.12);
+  border-top-right-radius: 32px;
+  border-bottom-right-radius: 32px;
+}
+
+.sidebar-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+}
+
+.new-chat-btn {
+  margin-top: 20px;
+  padding: 0.7rem 1.2rem;
+  background: linear-gradient(90deg, #7c3aed 0%, #6366f1 100%);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1.05rem;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.13);
+  transition: background 0.2s, transform 0.2s;
+  margin-bottom: 2.5rem;
+}
+.new-chat-btn:hover {
+  background: linear-gradient(90deg, #6366f1 0%, #7c3aed 100%);
+  transform: translateY(-2px) scale(1.04);
+}
+
+.sidebar-header h2 {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0;
+  font-size: 1.45rem;
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(99,102,241,0.08);
+}
+
+.sidebar-header h2 svg {
+  margin-right: 0.7rem;
+  color: #fff;
+  filter: drop-shadow(0 2px 6px #7c3aed33);
+}
+
+.lvdc-text {
+  text-align: center;
+  margin: 0.3rem 0 0.2rem 2px;
+  font-weight: 700;
+  font-size: 1.08rem;
+  color: #c7d2fe;
+  letter-spacing: 0.08em;
+}
+
+.sidebar-header p {
+  font-size: 0.95rem;
+  color: #e0e7ff;
+}
+
+.thread-list {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 2px;
+  /* Masquer scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE et Edge */
+}
+
+.thread-item {
+  padding: 0.7rem 1rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  font-size: 1.05rem;
+  margin-bottom: 0.5rem;
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  color: #ede9fe;
+  box-shadow: 0 1px 4px rgba(99,102,241,0.07);
+}
+.thread-item:hover, .thread-item.active {
+  background: linear-gradient(90deg, #a5b4fc 0%, #c7d2fe 100%);
+  color: #4f46e5;
+  font-weight: 700;
+}

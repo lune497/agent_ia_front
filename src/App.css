@@ -1,0 +1,7 @@
+.App {
+  display: flex;
+  height: 100vh;
+  font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(135deg, #e0e7ff 0%, #f5f3ff 100%);
+  overflow: hidden;
+}
