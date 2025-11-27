@@ -78,7 +78,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         setTypewriterMsg(null);
         setDisplayedMessages(prev => [
           ...prev,
-          { id: Date.now(), content: typewriterMsg, role: "assistant" }
+          { id: Date.now(), content: typewriterMsg, role: "assistant" },
         ]);
         setWaitingForResponse(false);
         setOptimisticUserMsg(null);
@@ -87,16 +87,15 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
     if (typewriterMsg && typewriterContent.length < typewriterMsg.length) {
       intervalId = setInterval(() => {
-        setTypewriterContent(prev =>
-          typewriterMsg.slice(0, prev.length + 1)
-        );
+        setTypewriterContent(prev => typewriterMsg.slice(0, prev.length + 1));
       }, 7);
     }
+
     if (typewriterMsg && typewriterContent.length === typewriterMsg.length) {
       setTimeout(() => {
         setDisplayedMessages(prev => [
           ...prev,
-          { id: Date.now(), content: typewriterMsg, role: "assistant" }
+          { id: Date.now(), content: typewriterMsg, role: "assistant" },
         ]);
         setTypewriterMsg(null);
         setTypewriterContent("");
@@ -114,95 +113,120 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     };
   }, [typewriterMsg, typewriterContent, refreshMessages]);
 
+
   // Envoi message utilisateur
   const sendMessage = async () => {
-    if (!prompt || !conversationId) return;
-    const originalPrompt = prompt; // keep a copy so we can restore on error
-    setSending(true);
-    setLocalError("");
-    setOptimisticUserMsg({ prompt: originalPrompt });
-    setWaitingForResponse(true);
-    // clear the input immediately for better UX (will restore on failure)
-    setPrompt("");
+  if (!prompt || !conversationId) return;
 
-    setTimeout(() => {
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-      }
-    }, 100);
+  const originalPrompt = prompt; // Keep a copy to restore on error
+  setSending(true);
+  setLocalError("");
+  setOptimisticUserMsg({ prompt: originalPrompt });
+  setWaitingForResponse(true);
+  setPrompt(""); // Clear input for better UX
 
-    try {
-      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/addMessageToConversation_ined`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ message: prompt, conversation_id: conversationId }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setLastResponseId(data.response_id);
-
-        if (window.__chat_polling_interval) {
-          clearInterval(window.__chat_polling_interval);
-          window.__chat_polling_interval = null;
-        }
-
-        pollForResponse(data.response_id);
-      } else {
-        setLocalError("Erreur lors de l'ajout du message");
-        setOptimisticUserMsg(null);
-        setWaitingForResponse(false);
-        // restore the user's text so they don't lose it
-        setPrompt(originalPrompt);
-      }
-    } catch (err) {
-      setLocalError("Erreur d'envoi : " + err.message);
-      setOptimisticUserMsg(null);
-      setWaitingForResponse(false);
-      // restore the user's text on network/error
-      setPrompt(originalPrompt);
+  setTimeout(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-    setSending(false);
-  };
+  }, 100);
 
-  // Polling réponse IA
-  const pollForResponse = (responseId) => {
-    window.__chat_polling_interval = setInterval(async () => {
-      try {
-        const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/getFinalResponseAssistant_ined`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ response_id: responseId }),
-        });
-        if (!res.ok) throw new Error("Polling échoué");
-        const data = await res.json();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
 
-        if (data.success && data.message) {
-          setOptimisticUserMsg(null);
-          setWaitingForResponse(false);
+  try {
+    const res = await fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ message: prompt, conversation_id: conversationId }),
+      signal: controller.signal, // Pass the signal to the fetch request
+    });
 
-          if (!typewriterMsg) {
-            setTypewriterMsg(data.message);
-            setTypewriterContent("");
-          }
+    clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
 
-          clearInterval(window.__chat_polling_interval);
-          window.__chat_polling_interval = null;
-        }
-      } catch (err) {
-        setLocalError("Erreur polling : " + err.message);
-        setWaitingForResponse(false);
-        setOptimisticUserMsg(null);
+    const data = await res.json();
+
+    if (data.success) {
+      setLastResponseId(data.response_id);
+
+      if (window.__chat_polling_interval) {
         clearInterval(window.__chat_polling_interval);
         window.__chat_polling_interval = null;
       }
-    }, 4000);
-  };
+
+      pollForResponse(data.response_id); // Start polling for response
+    } else {
+      setLocalError("Erreur lors de l'ajout du message");
+      setOptimisticUserMsg(null);
+      setWaitingForResponse(false);
+      setPrompt(originalPrompt); // Restore user input on failure
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      setLocalError("La requête a été annulée en raison du délai d'attente");
+    } else {
+      setLocalError("Erreur d'envoi : " + err.message);
+    }
+    setOptimisticUserMsg(null);
+    setWaitingForResponse(false);
+    setPrompt(originalPrompt); // Restore user input on error
+  }
+  setSending(false);
+};
+
+
+  // Polling réponse IA
+  const pollForResponse = (responseId) => {
+  window.__chat_polling_interval = setInterval(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
+
+    try {
+      const res = await fetch(`http://localhost/ia/public/api/restitution/getFinalResponseAssistant_ined`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ response_id: responseId }),
+        signal: controller.signal, // Pass the signal to the fetch request
+      });
+
+      clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
+
+      if (!res.ok) throw new Error("Polling échoué");
+
+      const data = await res.json();
+
+      if (data.success && data.message) {
+        setOptimisticUserMsg(null);
+        setWaitingForResponse(false);
+
+        if (!typewriterMsg) {
+          setTypewriterMsg(data.message);
+          setTypewriterContent("");
+        }
+
+        clearInterval(window.__chat_polling_interval); // Clear polling interval
+        window.__chat_polling_interval = null;
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        setLocalError("Le polling a été annulé en raison du délai d'attente");
+      } else {
+        setLocalError("Erreur polling : " + err.message);
+      }
+      setWaitingForResponse(false);
+      setOptimisticUserMsg(null);
+      clearInterval(window.__chat_polling_interval); // Clear polling interval
+      window.__chat_polling_interval = null;
+    }
+  }, 120000); // Polling every 2 minutes
+};
+
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -401,25 +425,30 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
     // build HTML document (Word can open HTML saved as .doc)
     let bodyHtml = `
-      <style>
-        body { font-family: 'Calibri', Arial, sans-serif; line-height: 1.6; color: #222; }
-        .message { margin-bottom: 24px; page-break-inside: avoid; }
-        .message-header { color: #4f46e5; font-size: 16px; font-weight: bold; margin-bottom: 12px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; }
-        .message-content { background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb; }
-        pre { background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; overflow:auto; }
-        pre code { font-family: Consolas, 'Courier New', monospace; font-size: 11px; }
-        code { font-family: Consolas, 'Courier New', monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
-        p { margin: 8px 0; }
-        ul, ol { margin: 8px 0; padding-left: 24px; }
-        h1, h2, h3 { color: #4f46e5; margin-top: 16px; }
-      </style>
+        <style>
+          /* Minimal, document-wide formatting requested by user */
+          body, .document, .message, .message-content, p, div {
+            font-family: 'Aptos', Calibri, Arial, sans-serif;
+            font-size: 11pt;
+            line-height: 1.15;
+            text-align: justify;
+            color: #000000;
+            margin: 0;
+            padding: 0;
+          }
+          /* Ensure paragraphs have no extra spacing before/after */
+          p { margin-top: 0; margin-bottom: 0; }
+          /* Keep code blocks monospaced but do not introduce extra margins */
+          pre, code { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; margin: 0; padding: 0; }
+          /* Prevent page-break splitting individual messages when printing/Word */
+          .message { page-break-inside: avoid; }
+        </style>
       <div class="document">`;
     selected.forEach((m, idx) => {
       const rendered = renderContentHtml(m.content);
       const safe = DOMPurify.sanitize(rendered, { ALLOWED_TAGS: ['div','span','p','pre','code','br','ul','ol','li','strong','em','h1','h2','h3'], ALLOWED_ATTR: ['class', 'style'] });
       bodyHtml += `
         <div class="message">
-          <div class="message-header">Réponse ${idx + 1}</div>
           <div class="message-content">${safe}</div>
         </div>`;
     });
@@ -449,7 +478,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             title="Sélectionner des messages"
           >
             <FaCheckSquare />
-            <span>Sélectionner</span>
+            <span>Télécharger Word</span>
           </button>
         ) : (
           <>
