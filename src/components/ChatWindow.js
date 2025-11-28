@@ -22,6 +22,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const storedUserName = localStorage.getItem('userName') || '';
   const displayName = storedUserName;
   const initials = displayName ? displayName.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase() : 'U';
+  const projectName = localStorage.getItem('projectName') || '';
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
@@ -141,7 +142,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
-      body: JSON.stringify({ message: prompt, conversation_id: conversationId }),
+      body: JSON.stringify({ message: prompt, conversation_id: conversationId, projet_name: projectName }),
       signal: controller.signal, // Pass the signal to the fetch request
     });
 
@@ -502,7 +503,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         )}
       </div>
       <div className="chat-title-bar">
-        <h1 className="chat-title-gradient">INED AGENT DE RESTITUTION</h1>
+        <h1 className="chat-title-gradient">AGENT IA PROJET {projectName && `- ${projectName}`}</h1>
         <img src="/agent-restitution.gif" alt="Agent de restitution" className="chat-title-gif" />
       </div>
       <div className="chat-header">
