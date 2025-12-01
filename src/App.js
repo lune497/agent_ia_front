@@ -32,7 +32,7 @@ function App() {
 
   const fetchConversations = async () => {
     try {
-      const res = await fetch(`https://dcd612f5d791.ngrok-free.app/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
+      const res = await fetch(`https://lvdc-group.com/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -53,7 +53,7 @@ function App() {
     if (showLoader) setLoading(true);
     setMessages([]);
     try {
-      const res = await fetch(`https://dcd612f5d791.ngrok-free.app/graphql?query={message_ineds(conversation_ined_id:${numericId}){id,prompt,message_ined_id,content,role}}`, {
+      const res = await fetch(`https://lvdc-group.com/ia/public/graphql?query={message_ineds(conversation_ined_id:${numericId}){id,prompt,message_ined_id,content,role}}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -74,7 +74,7 @@ function App() {
     setSelectedConversationId(null);
     setLoading(true);
     try {
-      const res = await fetch('https://dcd612f5d791.ngrok-free.app/api/restitution/createConversation_ined', {
+      const res = await fetch('https://lvdc-group.com/ia/public/api/restitution/createConversation_ined', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -85,7 +85,7 @@ function App() {
       
       const data = await res.json();
       if (data.success) {
-        const convRes = await fetch(`https://dcd612f5d791.ngrok-free.app/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
+        const convRes = await fetch(`https://lvdc-group.com/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',

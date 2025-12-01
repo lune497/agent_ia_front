@@ -2,7 +2,7 @@
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 https://lvdc-group.com/ia/public/
-https://dcd612f5d791.ngrok-free.app/
+https://lvdc-group.com/ia/public/
 
 ## Available Scripts
 

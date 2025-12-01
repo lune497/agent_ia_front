@@ -133,10 +133,12 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   }, 100);
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
+  // const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
 
   try {
-    const res = await fetch(`https://dcd612f5d791.ngrok-free.app/api/restitution/addMessageToConversation_ined`, {
+
+
+    const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/addMessageToConversation_ined`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -146,7 +148,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       signal: controller.signal, // Pass the signal to the fetch request
     });
 
-    clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
+    // clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
 
     const data = await res.json();
 
@@ -158,7 +160,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         window.__chat_polling_interval = null;
       }
 
-      pollForResponse(data.response_id); // Start polling for response
+      pollForResponse(data.response_id,prompt); // Start polling for response
     } else {
       setLocalError("Erreur lors de l'ajout du message");
       setOptimisticUserMsg(null);
@@ -176,17 +178,18 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     setPrompt(originalPrompt); // Restore user input on error
   }
   setSending(false);
+ 
 };
 
 
   // Polling réponse IA
-  const pollForResponse = (responseId) => {
-  window.__chat_polling_interval = setInterval(async () => {
+  const pollForResponse = async (responseId,prompt) => {
+  // window.__chat_polling_interval = setInterval(async () => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
+    // const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
 
     try {
-      const res = await fetch(`https://dcd612f5d791.ngrok-free.app/api/restitution/getFinalResponseAssistant_ined`, {
+      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/getFinalResponseAssistant_ined`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -196,16 +199,16 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         signal: controller.signal, // Pass the signal to the fetch request
       });
 
-      clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
+      // clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
 
       if (!res.ok) throw new Error("Polling échoué");
 
       const data = await res.json();
-
+      console.log("mmmmm first",data)
       if (data.success && data.message) {
         setOptimisticUserMsg(null);
         setWaitingForResponse(false);
-
+        console.log("mmmmm",data.message)
         if (!typewriterMsg) {
           setTypewriterMsg(data.message);
           setTypewriterContent("");
@@ -225,7 +228,10 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       clearInterval(window.__chat_polling_interval); // Clear polling interval
       window.__chat_polling_interval = null;
     }
-  }, 120000); // Polling every 2 minutes
+
+    setDisplayedMessages([...displayedMessages,{id:new Date().getTime(),prompt}])
+    
+  // }, 120000); // Polling every 2 minutes
 };
 
 
@@ -587,7 +593,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
                 <strong>Agent IA :</strong>
                 <div className="formatted-content">
                   {/* ✅ Rendu Markdown à la place du split en phrases */}
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  <ReactMarkdown >{msg.content}</ReactMarkdown>
                 </div>
               </div>
             )}
@@ -607,7 +613,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           <div className="ai-message styled-ai-message">
             <strong>Agent IA :</strong>
             <div className="formatted-content">
-              <ReactMarkdown>{typewriterContent}</ReactMarkdown>
+              <ReactMarkdown >{typewriterContent}</ReactMarkdown>
             </div>
           </div>
         )}
