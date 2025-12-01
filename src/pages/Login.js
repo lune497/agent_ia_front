@@ -17,7 +17,7 @@ const Login = () => {
     const fetchProjets = async () => {
       try {
         const query = encodeURIComponent('{projets{id,nom_projet}}');
-        const res = await fetch(`http://localhost/ia/public/graphql?query=${query}`);
+        const res = await fetch(`https://dcd612f5d791.ngrok-free.app/graphql?query=${query}`);
         const data = await res.json();
         if (data.data && data.data.projets) {
           setProjets(data.data.projets);
@@ -42,7 +42,7 @@ const Login = () => {
         setError('Veuillez sélectionner un projet');
         return;
       }
-      const res = await fetch('http://localhost/ia/public/api/login', {
+      const res = await fetch('https://dcd612f5d791.ngrok-free.app/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, projet_id: projetId }),

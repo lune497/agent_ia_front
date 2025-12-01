@@ -136,7 +136,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
 
   try {
-    const res = await fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined`, {
+    const res = await fetch(`https://dcd612f5d791.ngrok-free.app/api/restitution/addMessageToConversation_ined`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -186,7 +186,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
 
     try {
-      const res = await fetch(`http://localhost/ia/public/api/restitution/getFinalResponseAssistant_ined`, {
+      const res = await fetch(`https://dcd612f5d791.ngrok-free.app/api/restitution/getFinalResponseAssistant_ined`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
