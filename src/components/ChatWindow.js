@@ -12,10 +12,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [waitingForResponse, setWaitingForResponse] = useState(false);
   const [optimisticUserMsg, setOptimisticUserMsg] = useState(null);
 
-  // On garde tes states typewriter mais on ne les utilise plus (stream = direct)
-  const [typewriterMsg, setTypewriterMsg] = useState(null);
-  const [typewriterContent, setTypewriterContent] = useState("");
-
   const [displayedMessages, setDisplayedMessages] = useState([]);
   const messagesEndRef = useRef(null);
 
@@ -34,16 +30,14 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
   // Scroll automatique
   useEffect(() => {
-    if (messagesEndRef.current && !waitingForResponse && !typewriterMsg) {
+    if (messagesEndRef.current && !waitingForResponse) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, waitingForResponse, optimisticUserMsg, typewriterContent, typewriterMsg]);
+  }, [messages, waitingForResponse, optimisticUserMsg, displayedMessages]);
 
   // Scroll auto quand conversation change / messages changent
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [conversationId, displayedMessages]);
 
   // Bouton scroll haut
@@ -51,19 +45,15 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     const chatMessagesDiv = document.querySelector('.chat-messages');
     if (!chatMessagesDiv) return;
 
-    const handleScroll = () => {
-      setShowScrollTop(chatMessagesDiv.scrollTop > 100);
-    };
-
+    const handleScroll = () => setShowScrollTop(chatMessagesDiv.scrollTop > 100);
     chatMessagesDiv.addEventListener('scroll', handleScroll);
     return () => chatMessagesDiv.removeEventListener('scroll', handleScroll);
-  }, [displayedMessages, waitingForResponse, typewriterMsg, typewriterContent]);
+  }, [displayedMessages, waitingForResponse]);
 
   useEffect(() => {
     setDisplayedMessages(messages);
   }, [messages]);
 
-  // Helper: detecte si la réponse contient du HTML (simple heuristique)
   const isHTMLContent = (text) => {
     if (!text) return false;
     return /<\/?[a-z][\s\S]*>/i.test(text);
@@ -82,21 +72,24 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
   // Envoi message utilisateur (STREAM)
   const sendMessage = async () => {
-    if (!prompt || !conversationId) return;
+    if (!prompt || !conversationId || sending || waitingForResponse) return;
 
     const originalPrompt = prompt;
 
     setSending(true);
     setLocalError("");
+
+    // ✅ afficher le prompt UNE SEULE FOIS: via optimisticUserMsg
     setOptimisticUserMsg({ prompt: originalPrompt });
+
     setWaitingForResponse(true);
     setPrompt("");
 
     setTimeout(() => {
       if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
+    }, 50);
 
-    // Ajoute un message assistant vide qui va se remplir en streaming
+    // ✅ message assistant en cours (vide)
     const streamingMsgId = Date.now();
     setDisplayedMessages(prev => ([
       ...prev,
@@ -128,8 +121,20 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
 
-      // On ajoute le message user dans displayedMessages (comme tu le faisais via prompt)
-      setDisplayedMessages(prev => ([...prev, { id: Date.now() + 1, prompt: originalPrompt }]));
+      // ✅ support \n\n et \r\n\r\n
+      const nextBlock = () => {
+        const p1 = buffer.indexOf("\n\n");
+        const p2 = buffer.indexOf("\r\n\r\n");
+        if (p1 === -1 && p2 === -1) return null;
+
+        let cut, len;
+        if (p2 !== -1 && (p1 === -1 || p2 < p1)) { cut = p2; len = 4; }
+        else { cut = p1; len = 2; }
+
+        const block = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + len);
+        return block;
+      };
 
       while (true) {
         const { value, done } = await reader.read();
@@ -137,23 +142,22 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
         buffer += decoder.decode(value, { stream: true });
 
-        // SSE: chaque event est séparé par \n\n
-        let cut;
-        while ((cut = buffer.indexOf("\n\n")) !== -1) {
-          const block = buffer.slice(0, cut);
-          buffer = buffer.slice(cut + 2);
-
+        let block;
+        while ((block = nextBlock()) !== null) {
           let eventName = "message";
           const dataLines = [];
 
-          block.split("\n").forEach(line => {
+          block.split(/\r?\n/).forEach(line => {
             if (line.startsWith("event:")) eventName = line.slice(6).trim();
-            if (line.startsWith("data:")) dataLines.push(line.slice(5)); // ne pas trim ici (on garde exact)
+            if (line.startsWith("data:")) dataLines.push(line.slice(5)); // garder tel quel
           });
 
           const dataStr = dataLines.join("\n").trim();
 
           if (eventName === "delta") {
+            // ✅ dès le 1er delta, on enlève "réfléchit..."
+            setWaitingForResponse(false);
+
             setDisplayedMessages(prev => prev.map(m =>
               m.id === streamingMsgId
                 ? { ...m, content: (m.content || "") + dataStr }
@@ -163,14 +167,16 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
           if (eventName === "done") {
             setWaitingForResponse(false);
+
+            // ✅ on retire le prompt optimiste quand c'est terminé
             setOptimisticUserMsg(null);
-            refreshMessages(false); // optionnel (si tu veux resync DB)
+
+            refreshMessages(false);
           }
 
           if (eventName === "error") {
             let err;
             try { err = JSON.parse(dataStr); } catch { err = { message: dataStr }; }
-
             setLocalError(err.message || "Erreur streaming");
             setWaitingForResponse(false);
             setOptimisticUserMsg(null);
@@ -194,53 +200,37 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
   // Scroll pendant “streaming”
   useEffect(() => {
-    if (waitingForResponse && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [displayedMessages, waitingForResponse]);
+    if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [displayedMessages]);
 
-  // When streaming HTML into the iframe, also scroll the iframe's inner document to bottom
+  // Scroll iframe HTML preview si besoin
   useEffect(() => {
-    // ici on prend le dernier message assistant en cours
-    const last = displayedMessages && displayedMessages.length
-      ? displayedMessages[displayedMessages.length - 1]
-      : null;
-
-    if (!last || !last.content) return;
+    const last = displayedMessages?.length ? displayedMessages[displayedMessages.length - 1] : null;
+    if (!last?.content) return;
     if (!isHTMLContent(last.content)) return;
 
     const iframes = document.querySelectorAll('.html-preview-iframe');
-    if (!iframes || iframes.length === 0) return;
+    if (!iframes?.length) return;
 
     const iframe = iframes[iframes.length - 1];
-    if (!iframe) return;
-
     try {
       const doc = iframe.contentDocument || iframe.contentWindow.document;
       const scrollHeight = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
       iframe.contentWindow.scrollTo({ top: scrollHeight, behavior: 'smooth' });
-    } catch (err) {
-      // ignore
-    }
+    } catch (_) {}
   }, [displayedMessages]);
 
-  // Toggle message selection
   const toggleSelectMessage = (id) => {
-    setSelectedMessages(prev => {
-      if (prev.includes(id)) return prev.filter(x => x !== id);
-      return [...prev, id];
-    });
+    setSelectedMessages(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  // Clear selection mode
   const clearSelection = () => {
     setSelectedMessages([]);
     setSelectMode(false);
   };
 
-  // Download selected messages as Word document
   const downloadSelectedAsWord = () => {
-    if (!selectedMessages || selectedMessages.length === 0) return;
+    if (!selectedMessages?.length) return;
 
     const escapeHtml = (str) => {
       if (!str && str !== 0) return '';
@@ -264,15 +254,10 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         const langNorm = (lang || '').toLowerCase();
         const langClass = lang ? `language-${langNorm}` : '';
         let codeHtml = `<pre><code class="${langClass}" style="white-space: pre-wrap;">${safeCode}</code></pre>`;
-        if (langNorm === 'html' || langNorm === 'xml') {
-          codeHtml = `<div class="code-section"><div class="code-title">HTML</div>${codeHtml}</div>`;
-        } else if (langNorm === 'css') {
-          codeHtml = `<div class="code-section"><div class="code-title">CSS</div>${codeHtml}</div>`;
-        } else if (langNorm === 'js' || langNorm === 'javascript') {
-          codeHtml = `<div class="code-section"><div class="code-title">JavaScript</div>${codeHtml}</div>`;
-        } else {
-          codeHtml = `<div class="code-section"><div class="code-title">Code</div>${codeHtml}</div>`;
-        }
+        if (langNorm === 'html' || langNorm === 'xml') codeHtml = `<div class="code-section"><div class="code-title">HTML</div>${codeHtml}</div>`;
+        else if (langNorm === 'css') codeHtml = `<div class="code-section"><div class="code-title">CSS</div>${codeHtml}</div>`;
+        else if (langNorm === 'js' || langNorm === 'javascript') codeHtml = `<div class="code-section"><div class="code-title">JavaScript</div>${codeHtml}</div>`;
+        else codeHtml = `<div class="code-section"><div class="code-title">Code</div>${codeHtml}</div>`;
         codeBlocks.push(codeHtml);
         return `<!--CODE_BLOCK_${idx}-->`;
       });
@@ -298,28 +283,25 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
       working = working.replace(/(^((?:[ \t]*[-\*]\s+.*\n?)+))/gm, (group) => {
         const lines = group.split(/\n/).filter(Boolean);
-        const items = lines.map(line => line.replace(/^[ \t]*[-\*]\s+/, ''))
+        return lines
+          .map(line => line.replace(/^[ \t]*[-\*]\s+/, ''))
           .map(item => `<p style="line-height:1.15; mso-line-height-rule:exactly;">${item}</p>`).join('');
-        return items;
       });
 
       working = working.replace(/(^((?:[ \t]*\d+\.\s+.*\n?)+))/gm, (group) => {
         const lines = group.split(/\n/).filter(Boolean);
-        const items = lines.map(line => line.replace(/^[ \t]*\d+\.\s+/, ''))
+        return lines
+          .map(line => line.replace(/^[ \t]*\d+\.\s+/, ''))
           .map(item => `<p style="line-height:1.15; mso-line-height-rule:exactly;">${item}</p>`).join('');
-        return items;
       });
 
-      const parts = working.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 0);
+      const parts = working.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
       working = parts.map(p => {
         if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(p)) return p;
-        const withBreaks = p.replace(/\n/g, '<br/>');
-        return `<p style="line-height:1.15; mso-line-height-rule:exactly;">${withBreaks}</p>`;
+        return `<p style="line-height:1.15; mso-line-height-rule:exactly;">${p.replace(/\n/g, '<br/>')}</p>`;
       }).join('\n');
 
-      working = working.replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n');
-      working = working.replace(/[ \t]{2,}/g, ' ');
-
+      working = working.replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').replace(/[ \t]{2,}/g, ' ');
       working = working.replace(/<!--INLINE_CODE_(\d+)-->/g, (m, i) => inlineCodes[Number(i)] || '');
       working = working.replace(/<!--CODE_BLOCK_(\d+)-->/g, (m, i) => codeBlocks[Number(i)] || '');
 
@@ -331,22 +313,22 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       .sort((a, b) => a.id - b.id);
 
     let bodyHtml = `
-        <style>
-          body, .document, .message, .message-content, p, div {
-            font-family: 'Aptos', Calibri, Arial, sans-serif;
-            font-size: 11pt;
-            text-align: left;
-            color: #000000;
-            margin: 0;
-            padding: 0;
-          }
-          p { margin-top: 0pt; margin-bottom: 0pt; }
-          p, .message-content { line-height: 1.15; }
-          body { line-height: 115%; }
-          pre, code { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; margin: 0; padding: 0; }
-          .message { page-break-inside: avoid; }
-          .message.first .message-content { text-align: center; }
-        </style>
+      <style>
+        body, .document, .message, .message-content, p, div {
+          font-family: 'Aptos', Calibri, Arial, sans-serif;
+          font-size: 11pt;
+          text-align: left;
+          color: #000000;
+          margin: 0;
+          padding: 0;
+        }
+        p { margin-top: 0pt; margin-bottom: 0pt; }
+        p, .message-content { line-height: 1.15; }
+        body { line-height: 115%; }
+        pre, code { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; margin: 0; padding: 0; }
+        .message { page-break-inside: avoid; }
+        .message.first .message-content { text-align: center; }
+      </style>
       <div class="document">`;
 
     selected.forEach((m, idx) => {
@@ -355,6 +337,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         ALLOWED_TAGS: ['div', 'span', 'p', 'pre', 'code', 'br', 'strong', 'em', 'h1', 'h2', 'h3'],
         ALLOWED_ATTR: ['class', 'style']
       });
+
       const wrapperClass = idx === 0 ? 'message first' : 'message';
       const inlineStyle = idx === 0
         ? ' style="text-align:center; line-height:1.15; mso-line-height-rule:exactly;"'
@@ -387,30 +370,17 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     <div className="chat-window">
       <div className="floating-actions">
         {!selectMode ? (
-          <button
-            className="select-mode-btn"
-            onClick={() => setSelectMode(true)}
-            title="Sélectionner des messages"
-          >
+          <button className="select-mode-btn" onClick={() => setSelectMode(true)} title="Sélectionner des messages">
             <FaCheckSquare />
             <span>Télécharger Word</span>
           </button>
         ) : (
           <>
-            <button
-              className="download-selected-btn"
-              onClick={downloadSelectedAsWord}
-              disabled={selectedMessages.length === 0}
-              title="Télécharger la sélection"
-            >
+            <button className="download-selected-btn" onClick={downloadSelectedAsWord} disabled={selectedMessages.length === 0} title="Télécharger la sélection">
               <FaDownload />
               <span>{selectedMessages.length} sélectionné{selectedMessages.length > 1 ? 's' : ''}</span>
             </button>
-            <button
-              className="cancel-select-btn"
-              onClick={clearSelection}
-              title="Annuler la sélection"
-            >
+            <button className="cancel-select-btn" onClick={clearSelection} title="Annuler la sélection">
               <FaTimes />
             </button>
           </>
@@ -425,57 +395,12 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       <div className="chat-header">
         {conversationId ? `Conversation #${conversationIdInt}` : 'Aucun chat sélectionné'}
         <div className="user-menu" style={{ marginTop: '17px', marginRight: '115px', position: 'fixed' }}>
-          <div
-            onClick={() => setDropdownOpen(!dropdownOpen)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer'
-            }}
-          >
-            <div style={{
-              width: 36,
-              height: 36,
-              borderRadius: '50%',
-              background: 'linear-gradient(135deg,#06b6d4,#6366f1)',
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 700,
-              fontSize: 14
-            }}>{initials}</div>
-            <div style={{
-              fontWeight: 700,
-              fontSize: 14,
-              background: 'linear-gradient(90deg,#06b6d4,#9f7aea)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent'
-            }}>{displayName || 'Utilisateur'}</div>
+          <div onClick={() => setDropdownOpen(!dropdownOpen)} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+            <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#06b6d4,#6366f1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 }}>{initials}</div>
+            <div style={{ fontWeight: 700, fontSize: 14, background: 'linear-gradient(90deg,#06b6d4,#9f7aea)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{displayName || 'Utilisateur'}</div>
           </div>
-          <ul className={`dropdown-menu ${dropdownOpen ? 'open' : ''}`} style={{
-            position: 'absolute',
-            top: '30px',
-            right: '0',
-            backgroundColor: 'white',
-            border: '1px solid #ccc',
-            borderRadius: '4px',
-            boxShadow: '0 2px 5px rgba(0, 0, 0, 0.2)',
-            zIndex: 1000,
-            listStyleType: 'none',
-            padding: '0',
-            margin: '0'
-          }}>
-            <li
-              className="dropdown-item"
-              onClick={handleLogout}
-              style={{
-                padding: '10px',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap'
-              }}
-            >
+          <ul className={`dropdown-menu ${dropdownOpen ? 'open' : ''}`} style={{ position: 'absolute', top: '30px', right: '0', backgroundColor: 'white', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 5px rgba(0, 0, 0, 0.2)', zIndex: 1000, listStyleType: 'none', padding: '0', margin: '0' }}>
+            <li className="dropdown-item" onClick={handleLogout} style={{ padding: '10px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               Déconnexion
             </li>
           </ul>
@@ -494,11 +419,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
               <div className="ai-message styled-ai-message">
                 {selectMode && (
                   <div className="message-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={selectedMessages.includes(msg.id)}
-                      onChange={() => toggleSelectMessage(msg.id)}
-                    />
+                    <input type="checkbox" checked={selectedMessages.includes(msg.id)} onChange={() => toggleSelectMessage(msg.id)} />
                   </div>
                 )}
                 <strong>Agent IA :</strong>
@@ -510,6 +431,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           </div>
         ))}
 
+        {/* ✅ prompt affiché UNE seule fois pendant l’attente */}
         {optimisticUserMsg && (
           <div className="message">
             <div className="user-message styled-user-message"><strong>Vous :</strong> {optimisticUserMsg.prompt}</div>
@@ -525,17 +447,11 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         <div ref={messagesEndRef} />
 
         {showScrollTop && (
-          <button
-            className="scroll-top-btn"
-            onClick={() => {
-              const chatMessagesDiv = document.querySelector('.chat-messages');
-              if (chatMessagesDiv) {
-                chatMessagesDiv.scrollTo({ top: 0, behavior: 'smooth' });
-              }
-              setShowScrollTop(false);
-            }}
-            title="Remonter en haut"
-          >
+          <button className="scroll-top-btn" onClick={() => {
+            const chatMessagesDiv = document.querySelector('.chat-messages');
+            if (chatMessagesDiv) chatMessagesDiv.scrollTo({ top: 0, behavior: 'smooth' });
+            setShowScrollTop(false);
+          }} title="Remonter en haut">
             ↑
           </button>
         )}
@@ -556,14 +472,10 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             rows={3}
             style={{ paddingRight: waitingForResponse ? '40px' : undefined }}
           />
-          <button onClick={sendMessage} disabled={sending || !prompt}>Envoyer</button>
+          <button onClick={sendMessage} disabled={sending || !prompt || waitingForResponse}>Envoyer</button>
 
           {waitingForResponse && (
-            <button
-              className="stop-btn stop-btn-input"
-              onClick={handleStopGeneration}
-              title="Arrêter la génération"
-            >
+            <button className="stop-btn stop-btn-input" onClick={handleStopGeneration} title="Arrêter la génération">
               &#9632;
             </button>
           )}
