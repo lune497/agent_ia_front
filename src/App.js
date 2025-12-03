@@ -10,6 +10,7 @@ function App() {
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [selectedConversationId, setSelectedConversationId] = useState(null);
+  const [newConversationId, setNewConversationId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -85,6 +86,8 @@ function App() {
       
       const data = await res.json();
       if (data.success) {
+        
+
         const convRes = await fetch(`https://lvdc-group.com/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
           method: 'GET',
           headers: {
@@ -94,11 +97,14 @@ function App() {
         });
         const convData = await convRes.json();
         const newConversations = convData.data.conversation_ineds;
+        setSelectedConversation(data.conversation_id);
+        // setNewConversationId(data.conversation_id)
         setConversations(newConversations);
         const newConv = newConversations.find(c => c.conversation_id === data.conversation_id);
         if (newConv) {
-          setSelectedConversation(newConv.conversation_id);
+          
           setSelectedConversationId(newConv.id);
+         
         }
       } else {
         setError("Impossible de créer une nouvelle conversation");
@@ -125,6 +131,7 @@ function App() {
             {!loading && <ChatWindow
               conversationId={selectedConversation}
               conversationIdInt={selectedConversationId}
+              // newConversationId={newConversationId}
               messages={messages}
               loading={loading}
               error={error}
