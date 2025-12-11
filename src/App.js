@@ -32,7 +32,7 @@ function App() {
 
   const fetchConversations = async () => {
     try {
-      const res = await fetch(`http://localhost/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
+      const res = await fetch(`http://localhost/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id,seq}}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -85,7 +85,7 @@ function App() {
       
       const data = await res.json();
       if (data.success) {
-        const convRes = await fetch(`http://localhost/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
+        const convRes = await fetch(`http://localhost/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id,seq}}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',

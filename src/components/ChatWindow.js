@@ -5,6 +5,10 @@ import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
 import './ChatWindow.css';
 
+// Reveal fluide APRES réception complète
+const REVEAL_INTERVAL_MS = 30;     // plus bas = plus rapide
+const REVEAL_CHARS_PER_TICK = 24;  // plus haut = plus rapide
+
 const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages, conversationIdInt }) => {
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
@@ -28,19 +32,25 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
 
-  // Scroll automatique
+  // refs: streaming + reveal
+  const streamControllerRef = useRef(null);
+  const revealTimerRef = useRef(null);
+
+  useEffect(() => {
+    setDisplayedMessages(messages);
+  }, [messages]);
+
+  // Scroll auto
   useEffect(() => {
     if (messagesEndRef.current && !waitingForResponse) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, waitingForResponse, optimisticUserMsg, displayedMessages]);
 
-  // Scroll auto quand conversation change / messages changent
   useEffect(() => {
     if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [conversationId, displayedMessages]);
 
-  // Bouton scroll haut
   useEffect(() => {
     const chatMessagesDiv = document.querySelector('.chat-messages');
     if (!chatMessagesDiv) return;
@@ -50,27 +60,52 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     return () => chatMessagesDiv.removeEventListener('scroll', handleScroll);
   }, [displayedMessages, waitingForResponse]);
 
-  useEffect(() => {
-    setDisplayedMessages(messages);
-  }, [messages]);
-
   const isHTMLContent = (text) => {
     if (!text) return false;
     return /<\/?[a-z][\s\S]*>/i.test(text);
   };
 
-  // STOP streaming (AbortController)
-  const handleStopGeneration = () => {
-    if (window.__chat_stream_controller) {
-      window.__chat_stream_controller.abort();
-      window.__chat_stream_controller = null;
+  const stopReveal = () => {
+    if (revealTimerRef.current) {
+      clearInterval(revealTimerRef.current);
+      revealTimerRef.current = null;
     }
+  };
+
+  const startReveal = (assistantMsgId, fullText) => {
+    stopReveal();
+
+    // on repart vide
+    setDisplayedMessages(prev => prev.map(m =>
+      m.id === assistantMsgId ? { ...m, content: "" } : m
+    ));
+
+    let idx = 0;
+    revealTimerRef.current = setInterval(() => {
+      idx = Math.min(idx + REVEAL_CHARS_PER_TICK, fullText.length);
+      const part = fullText.slice(0, idx);
+
+      setDisplayedMessages(prev => prev.map(m =>
+        m.id === assistantMsgId ? { ...m, content: part } : m
+      ));
+
+      if (idx >= fullText.length) stopReveal();
+    }, REVEAL_INTERVAL_MS);
+  };
+
+  // STOP streaming
+  const handleStopGeneration = () => {
+    if (streamControllerRef.current) {
+      streamControllerRef.current.abort();
+      streamControllerRef.current = null;
+    }
+    stopReveal();
     setWaitingForResponse(false);
     setOptimisticUserMsg(null);
     setLocalError("Génération arrêtée.");
   };
 
-  // Envoi message utilisateur (STREAM)
+  // Envoi message utilisateur (STREAM réseau, affichage après done + reveal)
   const sendMessage = async () => {
     if (!prompt || !conversationId || sending || waitingForResponse) return;
 
@@ -79,9 +114,8 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     setSending(true);
     setLocalError("");
 
-    // ✅ afficher le prompt UNE SEULE FOIS: via optimisticUserMsg
+    // Prompt affiché 1 fois
     setOptimisticUserMsg({ prompt: originalPrompt });
-
     setWaitingForResponse(true);
     setPrompt("");
 
@@ -89,15 +123,18 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }, 50);
 
-    // ✅ message assistant en cours (vide)
-    const streamingMsgId = Date.now();
+    // Message assistant placeholder
+    const assistantMsgId = Date.now();
     setDisplayedMessages(prev => ([
       ...prev,
-      { id: streamingMsgId, role: "assistant", content: "" }
+      { id: assistantMsgId, role: "assistant", content: "" }
     ]));
 
     const controller = new AbortController();
-    window.__chat_stream_controller = controller;
+    streamControllerRef.current = controller;
+
+    // On accumule TOUT sans afficher pendant la génération
+    let full = "";
 
     try {
       const res = await fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined_stream`, {
@@ -121,7 +158,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
 
-      // ✅ support \n\n et \r\n\r\n
       const nextBlock = () => {
         const p1 = buffer.indexOf("\n\n");
         const p2 = buffer.indexOf("\r\n\r\n");
@@ -135,6 +171,8 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         buffer = buffer.slice(cut + len);
         return block;
       };
+
+      let doneReceived = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -152,44 +190,39 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             if (line.startsWith("data:")) dataLines.push(line.slice(5)); // garder tel quel
           });
 
-          const dataStr = dataLines.join("\n").trim();
+          const dataStr = dataLines.join("\n"); // pas trim volontaire
 
           if (eventName === "delta") {
-            // ✅ dès le 1er delta, on enlève "réfléchit..."
-            setWaitingForResponse(false);
-
-            setDisplayedMessages(prev => prev.map(m =>
-              m.id === streamingMsgId
-                ? { ...m, content: (m.content || "") + dataStr }
-                : m
-            ));
+            full += dataStr;
           }
 
           if (eventName === "done") {
-            setWaitingForResponse(false);
-
-            // ✅ on retire le prompt optimiste quand c'est terminé
-            setOptimisticUserMsg(null);
-
-            refreshMessages(false);
+            doneReceived = true;
           }
 
           if (eventName === "error") {
             let err;
             try { err = JSON.parse(dataStr); } catch { err = { message: dataStr }; }
-            setLocalError(err.message || "Erreur streaming");
-            setWaitingForResponse(false);
-            setOptimisticUserMsg(null);
+            throw new Error(err.message || "Erreur streaming");
           }
         }
       }
+
+      // Fin génération => on enlève l’attente + on retire prompt optimiste
+      setWaitingForResponse(false);
+      setOptimisticUserMsg(null);
+
+      // Reveal fluide (sans “mélanger” le markdown pendant la génération réseau)
+      startReveal(assistantMsgId, full);
+
+      if (doneReceived) refreshMessages(false);
     } catch (err) {
       setLocalError(err.name === "AbortError" ? "Génération arrêtée." : ("Erreur streaming : " + err.message));
       setWaitingForResponse(false);
       setOptimisticUserMsg(null);
     } finally {
       setSending(false);
-      window.__chat_stream_controller = null;
+      streamControllerRef.current = null;
     }
   };
 
@@ -197,11 +230,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     localStorage.removeItem('token');
     navigate('/login');
   };
-
-  // Scroll pendant “streaming”
-  useEffect(() => {
-    if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-  }, [displayedMessages]);
 
   // Scroll iframe HTML preview si besoin
   useEffect(() => {
@@ -229,6 +257,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     setSelectMode(false);
   };
 
+  // ✅ WORD EXPORT (justifier seulement les verbatims/commentaires)
   const downloadSelectedAsWord = () => {
     if (!selectedMessages?.length) return;
 
@@ -245,63 +274,145 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     const renderContentHtml = (markdown) => {
       if (!markdown && markdown !== 0) return '';
 
-      markdown = String(markdown).replace(/réponses\s+fermées/gi, '');
+      let working = String(markdown);
 
+      // Nettoyage optionnel
+      working = working.replace(/réponses\s+fermées/gi, '');
+
+      // (1) NORMALISATION STRUCTURELLE (sur markdown brut)
+      const forceNewLineBefore = (pattern) => {
+        working = working.replace(pattern, (m) => `\n${m}`);
+      };
+      forceNewLineBefore(/\*\*Date de l'entretien\s*:\*\*/gi);
+      forceNewLineBefore(/\*\*Participants\s*:\*\*/gi);
+      forceNewLineBefore(/\*\*Équipe\s*:\*\*/gi);
+      forceNewLineBefore(/\*\*Q\.\s/gi);
+      forceNewLineBefore(/\*\*Commentaire\s*:\*\*/gi);
+
+      // Compression légère des sauts
+      working = working.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+
+      // (2) CODE BLOCKS
       const codeBlocks = [];
-      let working = String(markdown).replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (m, lang, code) => {
+      working = working.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (m, lang, code) => {
         const idx = codeBlocks.length;
         const safeCode = escapeHtml(code);
         const langNorm = (lang || '').toLowerCase();
         const langClass = lang ? `language-${langNorm}` : '';
         let codeHtml = `<pre><code class="${langClass}" style="white-space: pre-wrap;">${safeCode}</code></pre>`;
-        if (langNorm === 'html' || langNorm === 'xml') codeHtml = `<div class="code-section"><div class="code-title">HTML</div>${codeHtml}</div>`;
-        else if (langNorm === 'css') codeHtml = `<div class="code-section"><div class="code-title">CSS</div>${codeHtml}</div>`;
-        else if (langNorm === 'js' || langNorm === 'javascript') codeHtml = `<div class="code-section"><div class="code-title">JavaScript</div>${codeHtml}</div>`;
-        else codeHtml = `<div class="code-section"><div class="code-title">Code</div>${codeHtml}</div>`;
+        codeHtml = `<div class="code-section"><div class="code-title">${escapeHtml(langNorm || 'Code')}</div>${codeHtml}</div>`;
         codeBlocks.push(codeHtml);
         return `<!--CODE_BLOCK_${idx}-->`;
       });
 
+      // (3) INLINE CODE
       const inlineCodes = [];
       working = working.replace(/`([^`]+)`/g, (m, code) => {
         const idx = inlineCodes.length;
-        inlineCodes.push(`<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;">${escapeHtml(code)}</code>`);
+        inlineCodes.push(
+          `<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;">${escapeHtml(code)}</code>`
+        );
         return `<!--INLINE_CODE_${idx}-->`;
       });
 
+      // (4) BOLD/ITALIC -> HTML
       working = working.replace(/\*\*\*([\s\S]+?)\*\*\*/g, '<strong><em>$1</em></strong>');
       working = working.replace(/___([\s\S]+?)___/g, '<strong><em>$1</em></strong>');
+      working = working.replace(/\*\*([^\n]+?)\*\*\//g, '<strong>$1</strong>'); // safety (rare typo)
       working = working.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
       working = working.replace(/__([^\n]+?)__/g, '<strong>$1</strong>');
       working = working.replace(/\*([^\n*][^\n]*?)\*/g, '<em>$1</em>');
       working = working.replace(/_([^\n_][^\n]*?)_/g, '<em>$1</em>');
 
+      // ✅ PATCH : FORCER RETOUR LIGNE APRES LA QUESTION
+      working = working.replace(
+        /(<strong>Q\.[^<]*:<\/strong>)\s+/g,
+        '$1\n'
+      );
+
+      // (5) TITRES MARKDOWN
       working = working.replace(/^ {0,3}(#{1,6})\s*(.+)$/gm, (m, hashes, title) => {
         const level = Math.min(hashes.length, 6);
         return `<h${level}>${title.trim()}</h${level}>`;
       });
 
+      // (6) LISTES MARKDOWN -> PARAGRAPHES (sans puces)
       working = working.replace(/(^((?:[ \t]*[-\*]\s+.*\n?)+))/gm, (group) => {
         const lines = group.split(/\n/).filter(Boolean);
         return lines
-          .map(line => line.replace(/^[ \t]*[-\*]\s+/, ''))
-          .map(item => `<p style="line-height:1.15; mso-line-height-rule:exactly;">${item}</p>`).join('');
+          .map(line => line.replace(/^[ \t]*[-\*]\s+/, '').trim())
+          .filter(Boolean)
+          .map(item => `<p style="line-height:15pt; mso-line-height-rule:exactly;">${item}</p>`)
+          .join('');
       });
 
       working = working.replace(/(^((?:[ \t]*\d+\.\s+.*\n?)+))/gm, (group) => {
         const lines = group.split(/\n/).filter(Boolean);
         return lines
-          .map(line => line.replace(/^[ \t]*\d+\.\s+/, ''))
-          .map(item => `<p style="line-height:1.15; mso-line-height-rule:exactly;">${item}</p>`).join('');
+          .map(line => line.replace(/^[ \t]*\d+\.\s+/, '').trim())
+          .filter(Boolean)
+          .map(item => `<p style="line-height:15pt; mso-line-height-rule:exactly;">${item}</p>`)
+          .join('');
       });
 
-      const parts = working.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-      working = parts.map(p => {
-        if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(p)) return p;
-        return `<p style="line-height:1.15; mso-line-height-rule:exactly;">${p.replace(/\n/g, '<br/>')}</p>`;
+      // (7) PARAGRAPHES : STRUCTURE vs VERBATIMS
+      const isStructuralLine = (line) => {
+        const t = line.trim();
+        return (
+          t.startsWith('<h') ||
+          /^<strong>Date de l'entretien\s*:/i.test(t) ||
+          /^<strong>Participants\s*:/i.test(t) ||
+          /^<strong>Équipe\s*:/i.test(t) ||
+          /^<strong>Q\./i.test(t) ||
+          /^<strong>Commentaire\s*:/i.test(t) ||
+          /^<strong>[^<]+:\s*<\/strong>\s*$/i.test(t) // <strong>Nom :</strong> seul
+        );
+      };
+
+      const blocks = working.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+
+      working = blocks.map(block => {
+        if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(block)) return block;
+
+        const lines = block.split('\n').map(x => x.trim()).filter(Boolean);
+
+        const structural = [];
+        const verbatim = [];
+
+        for (const line of lines) {
+          const t = line.trim();
+
+          // Si on a "<strong>Nom :</strong> bla bla" => structure: "<strong>Nom :</strong>" + verbatim: "bla bla"
+          const m = t.match(/^<strong>([^<]+:\s*)<\/strong>\s*(.+)$/i);
+          if (m) {
+            const label = (m[1] || '').trim();
+            const rest = (m[2] || '').trim();
+            structural.push(`<strong>${label}</strong>`);
+            if (rest) verbatim.push(rest);
+            continue;
+          }
+
+          if (isStructuralLine(t)) structural.push(t);
+          else verbatim.push(t);
+        }
+
+        let html = '';
+
+        // Structure : garder les lignes via <br/>
+        if (structural.length) {
+          html += `<p style="line-height:15pt; mso-line-height-rule:exactly;">${structural.join('<br/>')}</p>`;
+        }
+
+        // ✅ Verbatim : paragraphe continu + class="verbatim" pour justifier
+        if (verbatim.length) {
+          const compact = verbatim.join(' ').replace(/\s+/g, ' ').trim();
+          html += `<p class="verbatim" style="line-height:15pt; mso-line-height-rule:exactly;">${compact}</p>`;
+        }
+
+        return html;
       }).join('\n');
 
-      working = working.replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').replace(/[ \t]{2,}/g, ' ');
+      // (8) REINJECTION CODES
       working = working.replace(/<!--INLINE_CODE_(\d+)-->/g, (m, i) => inlineCodes[Number(i)] || '');
       working = working.replace(/<!--CODE_BLOCK_(\d+)-->/g, (m, i) => codeBlocks[Number(i)] || '');
 
@@ -323,29 +434,42 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           padding: 0;
         }
         p { margin-top: 0pt; margin-bottom: 0pt; }
-        p, .message-content { line-height: 1.15; }
-        body { line-height: 115%; }
-        pre, code { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; margin: 0; padding: 0; }
+        body, .message-content, p { line-height: 15pt; mso-line-height-rule: exactly; }
+        pre, code {
+          font-family: Consolas, 'Courier New', monospace;
+          font-size: 10pt;
+          margin: 0;
+          padding: 0;
+        }
         .message { page-break-inside: avoid; }
-        .message.first .message-content { text-align: center; }
+
+        /* Centrer ton premier h2 (comme avant) */
+        .message-content h2:first-of-type {
+          text-align: center;
+          margin-top: 0;
+          margin-bottom: 8pt;
+        }
+
+        /* ✅ JUSTIFY seulement les verbatims/commentaires */
+        p.verbatim {
+          text-align: justify;
+          text-justify: inter-word;
+        }
       </style>
       <div class="document">`;
 
     selected.forEach((m, idx) => {
       const rendered = renderContentHtml(m.content);
+
       const safe = DOMPurify.sanitize(rendered, {
-        ALLOWED_TAGS: ['div', 'span', 'p', 'pre', 'code', 'br', 'strong', 'em', 'h1', 'h2', 'h3'],
-        ALLOWED_ATTR: ['class', 'style']
+        ALLOWED_TAGS: ['body','div','span','p','pre','code','br','strong','em','h1','h2','h3','h4','h5','h6'],
+        ALLOWED_ATTR: ['class','style']
       });
 
       const wrapperClass = idx === 0 ? 'message first' : 'message';
-      const inlineStyle = idx === 0
-        ? ' style="text-align:center; line-height:1.15; mso-line-height-rule:exactly;"'
-        : ' style="line-height:1.15; mso-line-height-rule:exactly;"';
-
       bodyHtml += `
         <div class="${wrapperClass}">
-          <div class="message-content"${inlineStyle}>${safe}</div>
+          <div class="message-content" style="line-height:15pt; mso-line-height-rule:exactly;">${safe}</div>
         </div>`;
     });
 
@@ -394,13 +518,13 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
       <div className="chat-header">
         {conversationId ? `Conversation #${conversationIdInt}` : 'Aucun chat sélectionné'}
-        <div className="user-menu" style={{ marginTop: '17px', marginRight: '115px', position: 'fixed' }}>
+        <div className="user-menu">
           <div onClick={() => setDropdownOpen(!dropdownOpen)} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
             <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#06b6d4,#6366f1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 }}>{initials}</div>
             <div style={{ fontWeight: 700, fontSize: 14, background: 'linear-gradient(90deg,#06b6d4,#9f7aea)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{displayName || 'Utilisateur'}</div>
           </div>
-          <ul className={`dropdown-menu ${dropdownOpen ? 'open' : ''}`} style={{ position: 'absolute', top: '30px', right: '0', backgroundColor: 'white', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 5px rgba(0, 0, 0, 0.2)', zIndex: 1000, listStyleType: 'none', padding: '0', margin: '0' }}>
-            <li className="dropdown-item" onClick={handleLogout} style={{ padding: '10px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <ul className={`dropdown-menu ${dropdownOpen ? 'open' : ''}`}>
+            <li className="dropdown-item" onClick={handleLogout}>
               Déconnexion
             </li>
           </ul>
@@ -431,7 +555,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           </div>
         ))}
 
-        {/* ✅ prompt affiché UNE seule fois pendant l’attente */}
         {optimisticUserMsg && (
           <div className="message">
             <div className="user-message styled-user-message"><strong>Vous :</strong> {optimisticUserMsg.prompt}</div>
@@ -440,7 +563,9 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
         {waitingForResponse && (
           <div className="ai-message ai-thinking styled-ai-thinking">
-            <span className="thinking-dots">L'IA réfléchit<span className="dot">.</span><span className="dot">.</span><span className="dot">.</span></span>
+            <span className="thinking-dots">
+              L'IA réfléchit<span className="dot">.</span><span className="dot">.</span><span className="dot">.</span>
+            </span>
           </div>
         )}
 
