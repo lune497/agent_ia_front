@@ -1,13 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FaCheckSquare, FaDownload, FaTimes } from 'react-icons/fa';
+import { FaUserCircle, FaCheckSquare, FaDownload, FaTimes } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
 import './ChatWindow.css';
-
-// Reveal fluide APRES réception complète
-const REVEAL_INTERVAL_MS = 30;     // plus bas = plus rapide
-const REVEAL_CHARS_PER_TICK = 24;  // plus haut = plus rapide
 
 const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages, conversationIdInt }) => {
   const [prompt, setPrompt] = useState("");
@@ -15,252 +11,326 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [localError, setLocalError] = useState("");
   const [waitingForResponse, setWaitingForResponse] = useState(false);
   const [optimisticUserMsg, setOptimisticUserMsg] = useState(null);
-
+  const [typewriterMsg, setTypewriterMsg] = useState(null);
+  const [typewriterContent, setTypewriterContent] = useState("");
   const [displayedMessages, setDisplayedMessages] = useState([]);
+  const [lastResponseId, setLastResponseId] = useState(null);
   const messagesEndRef = useRef(null);
-
   const token = localStorage.getItem('token');
   const navigate = useNavigate();
 
+  // user display name / initials (for a stylish display)
   const storedUserName = localStorage.getItem('userName') || '';
   const displayName = storedUserName;
-  const initials = displayName ? displayName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase() : 'U';
+  const initials = displayName ? displayName.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase() : 'U';
   const projectName = localStorage.getItem('projectName') || '';
-
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
 
-  // refs: streaming + reveal
-  const streamControllerRef = useRef(null);
-  const revealTimerRef = useRef(null);
+  // Scroll automatique
+  useEffect(() => {
+    if (
+      messagesEndRef.current &&
+      !waitingForResponse &&
+      !typewriterMsg
+    ) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, waitingForResponse, optimisticUserMsg, typewriterContent]);
+
+  // Scroll automatique en bas quand on change de conversation ou que les messages sont mis à jour
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [conversationId, displayedMessages]);
+
+  // Bouton scroll haut
+  useEffect(() => {
+    const chatMessagesDiv = document.querySelector('.chat-messages');
+    if (!chatMessagesDiv) return;
+    const handleScroll = () => {
+      setShowScrollTop(chatMessagesDiv.scrollTop > 100);
+    };
+    chatMessagesDiv.addEventListener('scroll', handleScroll);
+    return () => {
+      chatMessagesDiv.removeEventListener('scroll', handleScroll);
+    };
+  }, [displayedMessages, waitingForResponse, typewriterMsg, typewriterContent]);
 
   useEffect(() => {
     setDisplayedMessages(messages);
   }, [messages]);
 
-  // Scroll auto
-  useEffect(() => {
-    if (messagesEndRef.current && !waitingForResponse) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages, waitingForResponse, optimisticUserMsg, displayedMessages]);
-
-  useEffect(() => {
-    if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-  }, [conversationId, displayedMessages]);
-
-  useEffect(() => {
-    const chatMessagesDiv = document.querySelector('.chat-messages');
-    if (!chatMessagesDiv) return;
-
-    const handleScroll = () => setShowScrollTop(chatMessagesDiv.scrollTop > 100);
-    chatMessagesDiv.addEventListener('scroll', handleScroll);
-    return () => chatMessagesDiv.removeEventListener('scroll', handleScroll);
-  }, [displayedMessages, waitingForResponse]);
-
+  // Helper: detecte si la réponse contient du HTML (simple heuristique)
   const isHTMLContent = (text) => {
     if (!text) return false;
     return /<\/?[a-z][\s\S]*>/i.test(text);
   };
 
-  const stopReveal = () => {
-    if (revealTimerRef.current) {
-      clearInterval(revealTimerRef.current);
-      revealTimerRef.current = null;
+  // Effet typewriter
+  useEffect(() => {
+    let intervalId;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden && typewriterMsg) {
+        setTypewriterContent(typewriterMsg);
+        setTypewriterMsg(null);
+        setDisplayedMessages(prev => [
+          ...prev,
+          { id: Date.now(), content: typewriterMsg, role: "assistant" },
+        ]);
+        setWaitingForResponse(false);
+        setOptimisticUserMsg(null);
+      }
+    };
+
+    if (typewriterMsg && typewriterContent.length < typewriterMsg.length) {
+      intervalId = setInterval(() => {
+        setTypewriterContent(prev => typewriterMsg.slice(0, prev.length + 1));
+      }, 7);
     }
-  };
 
-  const startReveal = (assistantMsgId, fullText) => {
-    stopReveal();
-
-    // on repart vide
-    setDisplayedMessages(prev => prev.map(m =>
-      m.id === assistantMsgId ? { ...m, content: "" } : m
-    ));
-
-    let idx = 0;
-    revealTimerRef.current = setInterval(() => {
-      idx = Math.min(idx + REVEAL_CHARS_PER_TICK, fullText.length);
-      const part = fullText.slice(0, idx);
-
-      setDisplayedMessages(prev => prev.map(m =>
-        m.id === assistantMsgId ? { ...m, content: part } : m
-      ));
-
-      if (idx >= fullText.length) stopReveal();
-    }, REVEAL_INTERVAL_MS);
-  };
-
-  // STOP streaming
-  const handleStopGeneration = () => {
-    if (streamControllerRef.current) {
-      streamControllerRef.current.abort();
-      streamControllerRef.current = null;
+    if (typewriterMsg && typewriterContent.length === typewriterMsg.length) {
+      setTimeout(() => {
+        setDisplayedMessages(prev => [
+          ...prev,
+          { id: Date.now(), content: typewriterMsg, role: "assistant" },
+        ]);
+        setTypewriterMsg(null);
+        setTypewriterContent("");
+        setWaitingForResponse(false);
+        setOptimisticUserMsg(null);
+        refreshMessages(false);
+      }, 500);
     }
-    stopReveal();
-    setWaitingForResponse(false);
-    setOptimisticUserMsg(null);
-    setLocalError("Génération arrêtée.");
-  };
 
-  // Envoi message utilisateur (STREAM réseau, affichage après done + reveal)
-  const sendMessage = async () => {
-    if (!prompt || !conversationId || sending || waitingForResponse) return;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    const originalPrompt = prompt;
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [typewriterMsg, typewriterContent, refreshMessages]);
 
+
+  // ✅ Envoi message utilisateur (MODIF : accepte un paramètre)
+  const sendMessage = async (text) => {
+    const messageToSend = (text ?? prompt).trim();
+    if (!messageToSend || !conversationId) return;
+
+    const originalPrompt = messageToSend; // Keep a copy to restore on error
     setSending(true);
     setLocalError("");
-
-    // Prompt affiché 1 fois
     setOptimisticUserMsg({ prompt: originalPrompt });
     setWaitingForResponse(true);
-    setPrompt("");
+    setPrompt(""); // Clear input for better UX
 
     setTimeout(() => {
-      if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }, 50);
-
-    // Message assistant placeholder
-    const assistantMsgId = Date.now();
-    setDisplayedMessages(prev => ([
-      ...prev,
-      { id: assistantMsgId, role: "assistant", content: "" }
-    ]));
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
 
     const controller = new AbortController();
-    streamControllerRef.current = controller;
-
-    // On accumule TOUT sans afficher pendant la génération
-    let full = "";
+    // const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
 
     try {
-      const res = await fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined_stream`, {
+      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/addMessageToConversation_ined`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'Accept': 'text/event-stream',
         },
-        body: JSON.stringify({
-          message: originalPrompt,
-          conversation_id: conversationId,
-          projet_name: projectName
-        }),
-        signal: controller.signal,
+        body: JSON.stringify({ message: originalPrompt, conversation_id: conversationId, projet_name: projectName }),
+        signal: controller.signal, // Pass the signal to the fetch request
       });
 
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      // clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let buffer = "";
+      const data = await res.json();
 
-      const nextBlock = () => {
-        const p1 = buffer.indexOf("\n\n");
-        const p2 = buffer.indexOf("\r\n\r\n");
-        if (p1 === -1 && p2 === -1) return null;
+      if (data.success) {
+        setLastResponseId(data.response_id);
 
-        let cut, len;
-        if (p2 !== -1 && (p1 === -1 || p2 < p1)) { cut = p2; len = 4; }
-        else { cut = p1; len = 2; }
-
-        const block = buffer.slice(0, cut);
-        buffer = buffer.slice(cut + len);
-        return block;
-      };
-
-      let doneReceived = false;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        let block;
-        while ((block = nextBlock()) !== null) {
-          let eventName = "message";
-          const dataLines = [];
-
-          block.split(/\r?\n/).forEach(line => {
-            if (line.startsWith("event:")) eventName = line.slice(6).trim();
-            if (line.startsWith("data:")) dataLines.push(line.slice(5)); // garder tel quel
-          });
-
-          const dataStr = dataLines.join("\n"); // pas trim volontaire
-
-          if (eventName === "delta") {
-            full += dataStr;
-          }
-
-          if (eventName === "done") {
-            doneReceived = true;
-          }
-
-          if (eventName === "error") {
-            let err;
-            try { err = JSON.parse(dataStr); } catch { err = { message: dataStr }; }
-            throw new Error(err.message || "Erreur streaming");
-          }
+        if (window.__chat_polling_interval) {
+          clearInterval(window.__chat_polling_interval);
+          window.__chat_polling_interval = null;
         }
+
+        pollForResponse(data.response_id, originalPrompt); // Start polling for response
+      } else {
+        setLocalError("Erreur lors de l'ajout du message");
+        setOptimisticUserMsg(null);
+        setWaitingForResponse(false);
+        setPrompt(originalPrompt); // Restore user input on failure
       }
-
-      // Fin génération => on enlève l’attente + on retire prompt optimiste
-      setWaitingForResponse(false);
-      setOptimisticUserMsg(null);
-
-      // Reveal fluide (sans “mélanger” le markdown pendant la génération réseau)
-      startReveal(assistantMsgId, full);
-
-      if (doneReceived) refreshMessages(false);
     } catch (err) {
-      setLocalError(err.name === "AbortError" ? "Génération arrêtée." : ("Erreur streaming : " + err.message));
+      if (err.name === 'AbortError') {
+        setLocalError("La requête a été annulée en raison du délai d'attente");
+      } else {
+        setLocalError("Erreur d'envoi : " + err.message);
+      }
+      setOptimisticUserMsg(null);
+      setWaitingForResponse(false);
+      setPrompt(originalPrompt); // Restore user input on error
+    }
+    setSending(false);
+  };
+
+
+  // Polling réponse IA
+  const pollForResponse = async (responseId,prompt) => {
+    // window.__chat_polling_interval = setInterval(async () => {
+    const controller = new AbortController();
+    // const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
+
+    try {
+      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/getFinalResponseAssistant_ined`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ response_id: responseId }),
+        signal: controller.signal, // Pass the signal to the fetch request
+      });
+
+      // clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
+
+      if (!res.ok) throw new Error("Polling échoué");
+
+      const data = await res.json();
+      console.log("mmmmm first",data)
+      if (data.success && data.message) {
+        setOptimisticUserMsg(null);
+        setWaitingForResponse(false);
+        console.log("mmmmm",data.message)
+        if (!typewriterMsg) {
+          setTypewriterMsg(data.message);
+          setTypewriterContent("");
+        }
+
+        clearInterval(window.__chat_polling_interval); // Clear polling interval
+        window.__chat_polling_interval = null;
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        setLocalError("Le polling a été annulé en raison du délai d'attente");
+      } else {
+        setLocalError("Erreur polling : " + err.message);
+      }
       setWaitingForResponse(false);
       setOptimisticUserMsg(null);
-    } finally {
-      setSending(false);
-      streamControllerRef.current = null;
+      clearInterval(window.__chat_polling_interval); // Clear polling interval
+      window.__chat_polling_interval = null;
     }
+
+    setDisplayedMessages([...displayedMessages,{id:new Date().getTime(),prompt}])
+
+    // }, 120000); // Polling every 2 minutes
   };
+
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     navigate('/login');
   };
 
-  // Scroll iframe HTML preview si besoin
+  const handleStopGeneration = () => {
+    if (window.__chat_polling_interval) {
+      clearInterval(window.__chat_polling_interval);
+      window.__chat_polling_interval = null;
+    }
+    if (typewriterMsg && typewriterContent) {
+      setDisplayedMessages(prev => {
+        const alreadyExists = prev.some(
+          msg => msg.content === typewriterContent
+        );
+        if (!alreadyExists) {
+          return [
+            ...prev,
+            { id: Date.now(), content: typewriterContent, role: "assistant" }
+          ];
+        }
+        return prev;
+      });
+    }
+    setTypewriterMsg(null);
+    setTypewriterContent("");
+    setWaitingForResponse(false);
+    setOptimisticUserMsg(null);
+    setLocalError("Génération arrêtée.");
+  };
+
+  // Scroll pendant génération
   useEffect(() => {
-    const last = displayedMessages?.length ? displayedMessages[displayedMessages.length - 1] : null;
-    if (!last?.content) return;
+    if (typewriterMsg && messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [typewriterContent, typewriterMsg]);
+
+  // When streaming HTML into the iframe, also scroll the iframe's inner document to bottom
+  useEffect(() => {
+    if (!typewriterMsg) return;
+    if (!isHTMLContent(typewriterMsg)) return;
+
+    // find the last iframe preview (the one for the streaming message)
+    const iframes = document.querySelectorAll('.html-preview-iframe');
+    if (!iframes || iframes.length === 0) return;
+    const iframe = iframes[iframes.length - 1];
+    if (!iframe) return;
+
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow.document;
+      const scrollHeight = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
+      // scroll the iframe's window to bottom smoothly
+      iframe.contentWindow.scrollTo({ top: scrollHeight, behavior: 'smooth' });
+    } catch (err) {
+      // ignore silently
+    }
+  }, [typewriterContent, typewriterMsg]);
+
+  // Also ensure that when a full HTML message is appended we scroll its iframe to bottom
+  useEffect(() => {
+    // run after displayedMessages update
+    const last = displayedMessages && displayedMessages.length ? displayedMessages[displayedMessages.length - 1] : null;
+    if (!last || !last.content) return;
     if (!isHTMLContent(last.content)) return;
 
     const iframes = document.querySelectorAll('.html-preview-iframe');
-    if (!iframes?.length) return;
-
+    if (!iframes || iframes.length === 0) return;
     const iframe = iframes[iframes.length - 1];
     try {
       const doc = iframe.contentDocument || iframe.contentWindow.document;
       const scrollHeight = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
       iframe.contentWindow.scrollTo({ top: scrollHeight, behavior: 'smooth' });
-    } catch (_) {}
+    } catch (err) {
+      // ignore
+    }
   }, [displayedMessages]);
 
+  // Toggle message selection
   const toggleSelectMessage = (id) => {
-    setSelectedMessages(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedMessages(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      return [...prev, id];
+    });
   };
 
+  // Clear selection mode
   const clearSelection = () => {
     setSelectedMessages([]);
     setSelectMode(false);
   };
 
-  // ✅ WORD EXPORT (justifier seulement les verbatims/commentaires)
+  // Download selected messages as Word document
   const downloadSelectedAsWord = () => {
-    if (!selectedMessages?.length) return;
+    if (!selectedMessages || selectedMessages.length === 0) return;
 
+    // small helper: escape HTML special chars
     const escapeHtml = (str) => {
       if (!str && str !== 0) return '';
       return String(str)
@@ -271,260 +341,247 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         .replace(/'/g, '&#39;');
     };
 
+    // Convert markdown content to simple HTML but preserve code blocks and inline code,
+    // convert headings and lists, group code blocks by language, and convert emphasis.
     const renderContentHtml = (markdown) => {
       if (!markdown && markdown !== 0) return '';
 
-      let working = String(markdown);
-
-      // Nettoyage optionnel
-      working = working.replace(/réponses\s+fermées/gi, '');
-
-      // (1) NORMALISATION STRUCTURELLE (sur markdown brut)
-      const forceNewLineBefore = (pattern) => {
-        working = working.replace(pattern, (m) => `\n${m}`);
-      };
-      forceNewLineBefore(/\*\*Date de l'entretien\s*:\*\*/gi);
-      forceNewLineBefore(/\*\*Participants\s*:\*\*/gi);
-      forceNewLineBefore(/\*\*Équipe\s*:\*\*/gi);
-      forceNewLineBefore(/\*\*Q\.\s/gi);
-      forceNewLineBefore(/\*\*Commentaire\s*:\*\*/gi);
-
-      // Compression légère des sauts
-      working = working.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
-
-      // (2) CODE BLOCKS
       const codeBlocks = [];
-      working = working.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (m, lang, code) => {
+      // 1) extract fenced code blocks to placeholders (escape their contents)
+      let working = String(markdown).replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (m, lang, code) => {
         const idx = codeBlocks.length;
         const safeCode = escapeHtml(code);
         const langNorm = (lang || '').toLowerCase();
         const langClass = lang ? `language-${langNorm}` : '';
         let codeHtml = `<pre><code class="${langClass}" style="white-space: pre-wrap;">${safeCode}</code></pre>`;
-        codeHtml = `<div class="code-section"><div class="code-title">${escapeHtml(langNorm || 'Code')}</div>${codeHtml}</div>`;
+        if (langNorm === 'html' || langNorm === 'xml') {
+          codeHtml = `<div class="code-section"><div class="code-title">HTML</div>${codeHtml}</div>`;
+        } else if (langNorm === 'css') {
+          codeHtml = `<div class="code-section"><div class="code-title">CSS</div>${codeHtml}</div>`;
+        } else if (langNorm === 'js' || langNorm === 'javascript') {
+          codeHtml = `<div class="code-section"><div class="code-title">JavaScript</div>${codeHtml}</div>`;
+        } else {
+          codeHtml = `<div class="code-section"><div class="code-title">Code</div>${codeHtml}</div>`;
+        }
         codeBlocks.push(codeHtml);
         return `<!--CODE_BLOCK_${idx}-->`;
       });
 
-      // (3) INLINE CODE
+      // 2) extract inline code to placeholders
       const inlineCodes = [];
       working = working.replace(/`([^`]+)`/g, (m, code) => {
         const idx = inlineCodes.length;
-        inlineCodes.push(
-          `<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;">${escapeHtml(code)}</code>`
-        );
+        inlineCodes.push(`<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;">${escapeHtml(code)}</code>`);
         return `<!--INLINE_CODE_${idx}-->`;
       });
 
-      // (4) BOLD/ITALIC -> HTML
+      // 3) emphasis: bold/italic (strong/em)
+      // handle bold+italic
       working = working.replace(/\*\*\*([\s\S]+?)\*\*\*/g, '<strong><em>$1</em></strong>');
       working = working.replace(/___([\s\S]+?)___/g, '<strong><em>$1</em></strong>');
-      working = working.replace(/\*\*([^\n]+?)\*\*\//g, '<strong>$1</strong>'); // safety (rare typo)
+      // bold
       working = working.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
       working = working.replace(/__([^\n]+?)__/g, '<strong>$1</strong>');
+      // italic
       working = working.replace(/\*([^\n*][^\n]*?)\*/g, '<em>$1</em>');
       working = working.replace(/_([^\n_][^\n]*?)_/g, '<em>$1</em>');
 
-      // ✅ PATCH : FORCER RETOUR LIGNE APRES LA QUESTION
-      working = working.replace(
-        /(<strong>Q\.[^<]*:<\/strong>)\s+/g,
-        '$1\n'
-      );
-
-      // (5) TITRES MARKDOWN
+      // 4) headings
       working = working.replace(/^ {0,3}(#{1,6})\s*(.+)$/gm, (m, hashes, title) => {
         const level = Math.min(hashes.length, 6);
         return `<h${level}>${title.trim()}</h${level}>`;
       });
 
-      // (6) LISTES MARKDOWN -> PARAGRAPHES (sans puces)
+      // 5) unordered lists
       working = working.replace(/(^((?:[ \t]*[-\*]\s+.*\n?)+))/gm, (group) => {
         const lines = group.split(/\n/).filter(Boolean);
-        return lines
-          .map(line => line.replace(/^[ \t]*[-\*]\s+/, '').trim())
-          .filter(Boolean)
-          .map(item => `<p style="line-height:15pt; mso-line-height-rule:exactly;">${item}</p>`)
-          .join('');
+        const items = lines.map(line => line.replace(/^[ \t]*[-\*]\s+/, ''))
+          .map(item => `<li>${item}</li>`).join('');
+        return `<ul>${items}</ul>`;
       });
 
+      // 6) ordered lists
       working = working.replace(/(^((?:[ \t]*\d+\.\s+.*\n?)+))/gm, (group) => {
         const lines = group.split(/\n/).filter(Boolean);
-        return lines
-          .map(line => line.replace(/^[ \t]*\d+\.\s+/, '').trim())
-          .filter(Boolean)
-          .map(item => `<p style="line-height:15pt; mso-line-height-rule:exactly;">${item}</p>`)
-          .join('');
+        const items = lines.map(line => line.replace(/^[ \t]*\d+\.\s+/, ''))
+          .map(item => `<li>${item}</li>`).join('');
+        return `<ol>${items}</ol>`;
       });
 
-      // (7) PARAGRAPHES : STRUCTURE vs VERBATIMS
-      const isStructuralLine = (line) => {
-        const t = line.trim();
-        return (
-          t.startsWith('<h') ||
-          /^<strong>Date de l'entretien\s*:/i.test(t) ||
-          /^<strong>Participants\s*:/i.test(t) ||
-          /^<strong>Équipe\s*:/i.test(t) ||
-          /^<strong>Q\./i.test(t) ||
-          /^<strong>Commentaire\s*:/i.test(t) ||
-          /^<strong>[^<]+:\s*<\/strong>\s*$/i.test(t) // <strong>Nom :</strong> seul
-        );
-      };
+      // 7) paragraphs: split on double newlines
+      const hasDoubleNewline = /\n\s*\n/.test(working);
 
-      const blocks = working.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+      if (hasDoubleNewline) {
+        const parts = working.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 0);
+        working = parts.map(p => {
+          if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(p)) return p;
+          const withBreaks = p.replace(/\n/g, '<br/>');
+          const isVerbatim = !withBreaks.includes('<strong>');
+          return `<p class="${isVerbatim ? 'verbatim' : ''}">${withBreaks}</p>`;
+        }).join('\n');
+      } else {
+        const lines = working.split('\n').map(l => l.trim()).filter(Boolean);
+        working = lines.map(l => {
+          if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(l)) return l;
+          const isVerbatim = !l.includes('<strong>');
+          return `<p class="${isVerbatim ? 'verbatim' : ''}">${l}</p>`;
+        }).join('\n');
+      }
 
-      working = blocks.map(block => {
-        if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(block)) return block;
-
-        const lines = block.split('\n').map(x => x.trim()).filter(Boolean);
-
-        const structural = [];
-        const verbatim = [];
-
-        for (const line of lines) {
-          const t = line.trim();
-
-          // Si on a "<strong>Nom :</strong> bla bla" => structure: "<strong>Nom :</strong>" + verbatim: "bla bla"
-          const m = t.match(/^<strong>([^<]+:\s*)<\/strong>\s*(.+)$/i);
-          if (m) {
-            const label = (m[1] || '').trim();
-            const rest = (m[2] || '').trim();
-            structural.push(`<strong>${label}</strong>`);
-            if (rest) verbatim.push(rest);
-            continue;
-          }
-
-          if (isStructuralLine(t)) structural.push(t);
-          else verbatim.push(t);
-        }
-
-        let html = '';
-
-        // Structure : garder les lignes via <br/>
-        if (structural.length) {
-          html += `<p style="line-height:15pt; mso-line-height-rule:exactly;">${structural.join('<br/>')}</p>`;
-        }
-
-        // ✅ Verbatim : paragraphe continu + class="verbatim" pour justifier
-        if (verbatim.length) {
-          const compact = verbatim.join(' ').replace(/\s+/g, ' ').trim();
-          html += `<p class="verbatim" style="line-height:15pt; mso-line-height-rule:exactly;">${compact}</p>`;
-        }
-
-        return html;
-      }).join('\n');
-
-      // (8) REINJECTION CODES
+      // 8) re-insert inline code and code blocks
       working = working.replace(/<!--INLINE_CODE_(\d+)-->/g, (m, i) => inlineCodes[Number(i)] || '');
       working = working.replace(/<!--CODE_BLOCK_(\d+)-->/g, (m, i) => codeBlocks[Number(i)] || '');
 
       return working;
     };
 
+    // collect messages in original order
     const selected = displayedMessages
       .filter(m => selectedMessages.includes(m.id) && m.content)
       .sort((a, b) => a.id - b.id);
 
+    // build HTML document (Word can open HTML saved as .doc)
     let bodyHtml = `
-      <style>
-        body, .document, .message, .message-content, p, div {
-          font-family: 'Aptos', Calibri, Arial, sans-serif;
-          font-size: 11pt;
-          text-align: left;
-          color: #000000;
-          margin: 0;
-          padding: 0;
-        }
-        p { margin-top: 0pt; margin-bottom: 0pt; }
-        body, .message-content, p { line-height: 15pt; mso-line-height-rule: exactly; }
-        pre, code {
-          font-family: Consolas, 'Courier New', monospace;
-          font-size: 10pt;
-          margin: 0;
-          padding: 0;
-        }
-        .message { page-break-inside: avoid; }
-
-        /* Centrer ton premier h2 (comme avant) */
-        .message-content h2:first-of-type {
-          text-align: center;
-          margin-top: 0;
-          margin-bottom: 8pt;
-        }
-
-        /* ✅ JUSTIFY seulement les verbatims/commentaires */
-        p.verbatim {
-          text-align: justify;
-          text-justify: inter-word;
-        }
-      </style>
+        <style>
+          body, .document, .message, .message-content, p, div {
+            font-family: 'Aptos', Calibri, Arial, sans-serif;
+            font-size: 11pt;
+            line-height: 1.15;
+            text-align: justify;
+            color: #000000;
+            margin: 0;
+            padding: 0;
+          }
+          p {
+            margin-top: 0;
+            margin-bottom: 0;
+            line-height: 15pt;
+            mso-line-height-rule: exactly;
+            text-align: left;
+          }
+          .verbatim { text-align: justify; }
+          h2:first-of-type { text-align: center; }
+          pre, code { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; margin: 0; padding: 0; }
+          .message { page-break-inside: avoid; }
+          .message + .message { margin-top: 10pt; }
+        </style>
       <div class="document">`;
 
     selected.forEach((m, idx) => {
       const rendered = renderContentHtml(m.content);
-
-      const safe = DOMPurify.sanitize(rendered, {
-        ALLOWED_TAGS: ['body','div','span','p','pre','code','br','strong','em','h1','h2','h3','h4','h5','h6'],
-        ALLOWED_ATTR: ['class','style']
-      });
-
-      const wrapperClass = idx === 0 ? 'message first' : 'message';
+      const safe = DOMPurify.sanitize(rendered, { ALLOWED_TAGS: ['div','span','p','pre','code','br','ul','ol','li','strong','em','h1','h2','h3'], ALLOWED_ATTR: ['class', 'style'] });
       bodyHtml += `
-        <div class="${wrapperClass}">
-          <div class="message-content" style="line-height:15pt; mso-line-height-rule:exactly;">${safe}</div>
+        <div class="message">
+          <div class="message-content">${safe}</div>
         </div>`;
     });
-
     bodyHtml += `</div>`;
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Messages sélectionnés</title></head><body>${bodyHtml}</body></html>`;
     const blob = new Blob([html], { type: 'application/msword' });
     const url = window.URL.createObjectURL(blob);
-
     const a = document.createElement('a');
     a.href = url;
     a.download = 'messages-selectionnes.doc';
     document.body.appendChild(a);
     a.click();
     a.remove();
-
     window.URL.revokeObjectURL(url);
     clearSelection();
   };
 
   return (
     <div className="chat-window">
+      {/* Floating action buttons */}
       <div className="floating-actions">
         {!selectMode ? (
-          <button className="select-mode-btn" onClick={() => setSelectMode(true)} title="Sélectionner des messages">
+          <button
+            className="select-mode-btn"
+            onClick={() => setSelectMode(true)}
+            title="Sélectionner des messages"
+          >
             <FaCheckSquare />
             <span>Télécharger Word</span>
           </button>
         ) : (
           <>
-            <button className="download-selected-btn" onClick={downloadSelectedAsWord} disabled={selectedMessages.length === 0} title="Télécharger la sélection">
+            <button
+              className="download-selected-btn"
+              onClick={downloadSelectedAsWord}
+              disabled={selectedMessages.length === 0}
+              title="Télécharger la sélection"
+            >
               <FaDownload />
               <span>{selectedMessages.length} sélectionné{selectedMessages.length > 1 ? 's' : ''}</span>
             </button>
-            <button className="cancel-select-btn" onClick={clearSelection} title="Annuler la sélection">
+            <button
+              className="cancel-select-btn"
+              onClick={clearSelection}
+              title="Annuler la sélection"
+            >
               <FaTimes />
             </button>
           </>
         )}
       </div>
-
       <div className="chat-title-bar">
         <h1 className="chat-title-gradient">AGENT IA PROJET {projectName && `- ${projectName}`}</h1>
         <img src="/agent-restitution.gif" alt="Agent de restitution" className="chat-title-gif" />
       </div>
-
       <div className="chat-header">
         {conversationId ? `Conversation #${conversationIdInt}` : 'Aucun chat sélectionné'}
-        <div className="user-menu">
-          <div onClick={() => setDropdownOpen(!dropdownOpen)} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-            <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#06b6d4,#6366f1)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 }}>{initials}</div>
-            <div style={{ fontWeight: 700, fontSize: 14, background: 'linear-gradient(90deg,#06b6d4,#9f7aea)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{displayName || 'Utilisateur'}</div>
+        <div className="user-menu" style={{ marginTop: '17px', marginRight: '115px', position: 'fixed' }}>
+          <div
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer'
+            }}
+          >
+            <div style={{
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg,#06b6d4,#6366f1)',
+              color: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 700,
+              fontSize: 14
+            }}>{initials}</div>
+            <div style={{
+              fontWeight: 700,
+              fontSize: 14,
+              background: 'linear-gradient(90deg,#06b6d4,#9f7aea)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent'
+            }}>{displayName || 'Utilisateur'}</div>
           </div>
-          <ul className={`dropdown-menu ${dropdownOpen ? 'open' : ''}`}>
-            <li className="dropdown-item" onClick={handleLogout}>
+          <ul className={`dropdown-menu ${dropdownOpen ? 'open' : ''}`} style={{
+            position: 'absolute',
+            top: '30px',
+            right: '0',
+            backgroundColor: 'white',
+            border: '1px solid #ccc',
+            borderRadius: '4px',
+            boxShadow: '0 2px 5px rgba(0, 0, 0, 0.2)',
+            zIndex: 1000,
+            listStyleType: 'none',
+            padding: '0',
+            margin: '0'
+          }}>
+            <li
+              className="dropdown-item"
+              onClick={handleLogout}
+              style={{
+                padding: '10px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap'
+              }}
+            >
               Déconnexion
             </li>
           </ul>
@@ -533,7 +590,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
       <div className="chat-messages">
         {loading && <div className="loader">Chargement...</div>}
-
         {displayedMessages?.sort((a, b) => a.id - b.id)?.map((msg) => (
           <div key={msg.id} className="message">
             {msg.prompt && (
@@ -543,40 +599,53 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
               <div className="ai-message styled-ai-message">
                 {selectMode && (
                   <div className="message-checkbox">
-                    <input type="checkbox" checked={selectedMessages.includes(msg.id)} onChange={() => toggleSelectMessage(msg.id)} />
+                    <input
+                      type="checkbox"
+                      checked={selectedMessages.includes(msg.id)}
+                      onChange={() => toggleSelectMessage(msg.id)}
+                    />
                   </div>
                 )}
                 <strong>Agent IA :</strong>
                 <div className="formatted-content">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  {/* ✅ Rendu Markdown à la place du split en phrases */}
+                  <ReactMarkdown >{msg.content}</ReactMarkdown>
                 </div>
               </div>
             )}
           </div>
         ))}
-
         {optimisticUserMsg && (
           <div className="message">
             <div className="user-message styled-user-message"><strong>Vous :</strong> {optimisticUserMsg.prompt}</div>
           </div>
         )}
-
-        {waitingForResponse && (
+        {waitingForResponse && !typewriterMsg && (
           <div className="ai-message ai-thinking styled-ai-thinking">
-            <span className="thinking-dots">
-              L'IA réfléchit<span className="dot">.</span><span className="dot">.</span><span className="dot">.</span>
-            </span>
+            <span className="thinking-dots">L'IA réfléchit<span className="dot">.</span><span className="dot">.</span><span className="dot">.</span></span>
           </div>
         )}
-
+        {typewriterMsg && (
+          <div className="ai-message styled-ai-message">
+            <strong>Agent IA :</strong>
+            <div className="formatted-content">
+              <ReactMarkdown >{typewriterContent}</ReactMarkdown>
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
-
         {showScrollTop && (
-          <button className="scroll-top-btn" onClick={() => {
-            const chatMessagesDiv = document.querySelector('.chat-messages');
-            if (chatMessagesDiv) chatMessagesDiv.scrollTo({ top: 0, behavior: 'smooth' });
-            setShowScrollTop(false);
-          }} title="Remonter en haut">
+          <button
+            className="scroll-top-btn"
+            onClick={() => {
+              const chatMessagesDiv = document.querySelector('.chat-messages');
+              if (chatMessagesDiv) {
+                chatMessagesDiv.scrollTo({ top: 0, behavior: 'smooth' });
+              }
+              setShowScrollTop(false);
+            }}
+            title="Remonter en haut"
+          >
             ↑
           </button>
         )}
@@ -590,17 +659,25 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage();
+                sendMessage(prompt); // ✅ MODIF : même logique que le bouton
               }
             }}
             placeholder="Votre message..."
             rows={3}
-            style={{ paddingRight: waitingForResponse ? '40px' : undefined }}
+            style={{ paddingRight: (waitingForResponse || typewriterMsg) ? '40px' : undefined }}
           />
-          <button onClick={sendMessage} disabled={sending || !prompt || waitingForResponse}>Envoyer</button>
-
-          {waitingForResponse && (
-            <button className="stop-btn stop-btn-input" onClick={handleStopGeneration} title="Arrêter la génération">
+          <button
+            onClick={() => sendMessage(prompt)} // ✅ MODIF : même logique que Enter
+            disabled={sending || !prompt.trim()}
+          >
+            Envoyer
+          </button>
+          {(waitingForResponse || typewriterMsg) && (
+            <button
+              className="stop-btn stop-btn-input"
+              onClick={handleStopGeneration}
+              title="Arrêter la génération"
+            >
               &#9632;
             </button>
           )}

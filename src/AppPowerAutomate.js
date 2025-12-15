@@ -12,7 +12,7 @@ function App() {
   const pollForResponse = () => {
     const intervalId = setInterval(async () => {
       try {
-        const res = await fetch('http://localhost/ia/public/api/test/getFinalResponse');
+        const res = await fetch('https://lvdc-group.com/ia/public/api/test/getFinalResponse');
         // const res = await fetch('http://51.38.230.58/script/public/test/getFinalResponse');
         if (!res.ok) throw new Error('Erreur API polling');
 
@@ -37,7 +37,7 @@ function App() {
     try {
       // Étape 1 : lancer le traitement
       // const res = await fetch('http://51.38.230.58/script/public/test/startProcess', {
-      const res = await fetch('http://localhost/ia/public/api/test/startProcess', {
+      const res = await fetch('https://lvdc-group.com/ia/public/api/test/startProcess', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: prompt }),
