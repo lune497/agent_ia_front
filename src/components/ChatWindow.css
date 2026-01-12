@@ -394,10 +394,69 @@
   position: fixed;
   bottom: 24px;
   right: 24px;
-  display: flex;
+  /* display: flex; */
   gap: 12px;
   z-index: 1000;
 }
+
+/* Files toggle button */
+.files-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 28px;
+  background: linear-gradient(90deg,#0ea5e9 0%,#6366f1 100%);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(99,102,241,0.12);
+  font-weight: 700;
+}
+.files-toggle-btn:hover{ transform: translateY(-4px); }
+
+/* Floating file panel */
+.file-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 96px;
+  width: 360px;
+  max-height: 64vh;
+  background: linear-gradient(180deg,#ffffff 0%, #f8fafc 100%);
+  border-radius: 12px;
+  box-shadow: 0 18px 60px rgba(2,6,23,0.18);
+  overflow: hidden;
+  transform: translateY(18px) translateX(10px) scale(0.98);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 260ms cubic-bezier(.2,.9,.2,1), opacity 200ms ease;
+  z-index: 2100;
+  border: 1px solid rgba(99,102,241,0.06);
+}
+.file-panel.open{
+  transform: translateY(0) translateX(0) scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+.file-panel-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:12px 14px;
+  border-bottom: 1px solid rgba(15,23,42,0.04);
+  background: linear-gradient(90deg,#fff,#f7f8fd);
+}
+.file-panel-title{ font-weight:800; color:#0f172a; }
+.file-panel-close{ background:transparent;border:0;font-size:16px;cursor:pointer;color:#374151 }
+.file-panel-body{ padding:12px; overflow:auto; }
+.files-loader{ color:#6366f1; font-weight:700; }
+.files-error{ color:#b91c1c; font-weight:700; }
+.files-empty{ color:#475569; }
+.files-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.file-item{ display:flex; justify-content:space-between; align-items:center; padding:10px; border-radius:8px; background:linear-gradient(90deg,#fff,#fbfbff); box-shadow:0 4px 14px rgba(15,23,42,0.03); }
+.file-name{ font-weight:700; color:#0f172a; }
+.file-id{ font-size:12px; color:#6b7280 }
+
 
 /* Responsive adjustments for laptop/tablet and mobile (13" and smaller) */
 @media (max-width: 1024px) {
@@ -546,6 +605,11 @@
   background-color: #6366f1;
   border-color: #6366f1;
 }
+.comment-justify,
+.comment-justify p {
+  text-align: justify;
+  text-justify: inter-word;
+}
 
 .message-checkbox input[type="checkbox"]:checked::after {
   content: '';
@@ -568,3 +632,46 @@
   position: relative;
   margin-left: 35px !important;
 }
+
+/* Upload button */
+.upload-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 28px;
+  background: linear-gradient(90deg,#06b6d4 0%,#6366f1 100%);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(99,102,241,0.12);
+  font-weight: 700;
+}
+.upload-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Upload modal */
+.upload-modal {
+  position: fixed;
+  right: 24px;
+  bottom: 110px;
+  z-index: 2000;
+}
+.upload-card {
+  min-width: 320px;
+  max-width: 420px;
+  background: linear-gradient(180deg,#ffffff 0%, #f8fafc 100%);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 10px 40px rgba(2,6,23,0.12);
+  border: 1px solid rgba(99,102,241,0.08);
+}
+.upload-card h3 { margin: 0 0 8px 0; color: #0f172a; font-size: 1rem; }
+.upload-progress { width: 100%; height: 12px; background: #eef2ff; border-radius: 8px; overflow: hidden; margin-top: 8px; }
+.progress-bar { height: 100%; background: linear-gradient(90deg,#6366f1,#06b6d4); width: 0%; transition: width 0.2s ease; }
+.upload-progress-label { margin-top: 6px; font-size: 0.9rem; color: #334155; font-weight: 600; }
+.upload-success { margin-top: 8px; color: #065f46; font-weight: 700; }
+.upload-error { margin-top: 8px; color: #b91c1c; font-weight: 700; }
+.upload-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.cancel-upload-btn, .close-upload-btn { padding: 8px 12px; border-radius: 8px; border: none; cursor: pointer; font-weight: 700; }
+.cancel-upload-btn { background: linear-gradient(90deg,#ef4444,#f97316); color:#fff; }
+.close-upload-btn { background: #eef2ff; color: #3730a3; }

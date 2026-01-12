@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FaUserCircle, FaCheckSquare, FaDownload, FaTimes } from 'react-icons/fa';
+import { FaUserCircle, FaCheckSquare, FaDownload, FaTimes, FaFolderOpen } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
@@ -18,7 +18,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const messagesEndRef = useRef(null);
   const token = localStorage.getItem('token');
   const navigate = useNavigate();
-
   // user display name / initials (for a stylish display)
   const storedUserName = localStorage.getItem('userName') || '';
   const displayName = storedUserName;
@@ -28,6 +27,19 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
+  // Upload / fichier states
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState("");
+  const [uploadedInfo, setUploadedInfo] = useState(null);
+  const fileInputRef = useRef(null);
+  const xhrRef = useRef(null);
+  // Floating file panel states
+  const [filePanelOpen, setFilePanelOpen] = useState(false);
+  const [filesList, setFilesList] = useState([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesError, setFilesError] = useState("");
 
   // Scroll automatique
   useEffect(() => {
@@ -116,79 +128,92 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   }, [typewriterMsg, typewriterContent, refreshMessages]);
 
 
-  // ✅ Envoi message utilisateur (MODIF : accepte un paramètre)
-  const sendMessage = async (text) => {
-    const messageToSend = (text ?? prompt).trim();
-    if (!messageToSend || !conversationId) return;
+  // Envoi message utilisateur
+  const sendMessage = async () => {
+  if (!prompt || !conversationId) return;
 
-    const originalPrompt = messageToSend; // Keep a copy to restore on error
-    setSending(true);
-    setLocalError("");
-    setOptimisticUserMsg({ prompt: originalPrompt });
-    setWaitingForResponse(true);
-    setPrompt(""); // Clear input for better UX
+  const originalPrompt = prompt; // Keep a copy to restore on error
+  setSending(true);
+  setLocalError("");
+  setOptimisticUserMsg({ prompt: originalPrompt });
+  setWaitingForResponse(true);
+  setPrompt(""); // Clear input for better UX
 
-    setTimeout(() => {
-      if (messagesEndRef.current) {
-        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-      }
-    }, 100);
+  setTimeout(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, 100);
 
-    const controller = new AbortController();
-    // const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
+  const controller = new AbortController();
+  // const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
 
-    try {
-      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/addMessageToConversation_ined`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ message: originalPrompt, conversation_id: conversationId, projet_name: projectName }),
-        signal: controller.signal, // Pass the signal to the fetch request
-      });
-
-      // clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
-
-      const data = await res.json();
-
+ fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+  },
+  body: JSON.stringify({
+    message: prompt,
+    conversation_id: conversationId,
+    projet_name: projectName,
+  }),
+  // signal: controller.signal,
+})
+  .then(res => {
+    if (!res.ok) {
+      throw new Error(`HTTP error! status: ${res.status}`);
+    }
+    return res.json(); // or res.text() if needed
+  })
+  .then(async(data) => {
+    console.log('Message added:', data);
+    // success logic
       if (data.success) {
-        setLastResponseId(data.response_id);
+      setLastResponseId(data.response_id);
 
-        if (window.__chat_polling_interval) {
-          clearInterval(window.__chat_polling_interval);
-          window.__chat_polling_interval = null;
-        }
+      if (window.__chat_polling_interval) {
+        clearInterval(window.__chat_polling_interval);
+        window.__chat_polling_interval = null;
+      }
 
-        pollForResponse(data.response_id, originalPrompt); // Start polling for response
-      } else {
-        setLocalError("Erreur lors de l'ajout du message");
-        setOptimisticUserMsg(null);
-        setWaitingForResponse(false);
-        setPrompt(originalPrompt); // Restore user input on failure
-      }
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        setLocalError("La requête a été annulée en raison du délai d'attente");
-      } else {
-        setLocalError("Erreur d'envoi : " + err.message);
-      }
+       await pollForResponse(data.response_id,prompt); // Start polling for response
+    } else {
+      setLocalError("Erreur lors de l'ajout du message");
       setOptimisticUserMsg(null);
       setWaitingForResponse(false);
-      setPrompt(originalPrompt); // Restore user input on error
+      setPrompt(originalPrompt); // Restore user input on failure
     }
+  })
+  .catch(err => {
+   if (err.name === 'AbortError') {
+      setLocalError("La requête a été annulée en raison du délai d'attente");
+    } else {
+      setLocalError("Erreur d'envoi : " + err.message);
+    }
+    setOptimisticUserMsg(null);
+    setWaitingForResponse(false);
+    setPrompt(originalPrompt); // Restore user input on error
+  })
+  .finally(() => {
+    console.log('Add message request finished');
     setSending(false);
-  };
+    // cleanup / loader off
+  });
+
+
+  }
 
 
   // Polling réponse IA
   const pollForResponse = async (responseId,prompt) => {
-    // window.__chat_polling_interval = setInterval(async () => {
+  // window.__chat_polling_interval = setInterval(async () => {
     const controller = new AbortController();
     // const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
 
     try {
-      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/getFinalResponseAssistant_ined`, {
+      const res = await fetch(`http://localhost/ia/public/api/restitution/getFinalResponseAssistant`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -229,9 +254,9 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     }
 
     setDisplayedMessages([...displayedMessages,{id:new Date().getTime(),prompt}])
-
-    // }, 120000); // Polling every 2 minutes
-  };
+    
+  // }, 120000); // Polling every 2 minutes
+};
 
 
   const handleLogout = () => {
@@ -289,7 +314,8 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       // scroll the iframe's window to bottom smoothly
       iframe.contentWindow.scrollTo({ top: scrollHeight, behavior: 'smooth' });
     } catch (err) {
-      // ignore silently
+      // accessing iframe might fail if sandbox/origin changes; ignore silently
+      // console.warn('Could not scroll iframe:', err);
     }
   }, [typewriterContent, typewriterMsg]);
 
@@ -459,14 +485,12 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             mso-line-height-rule: exactly;
             text-align: left;
           }
-          .verbatim { text-align: justify; }
           h2:first-of-type { text-align: center; }
           pre, code { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; margin: 0; padding: 0; }
           .message { page-break-inside: avoid; }
           .message + .message { margin-top: 10pt; }
         </style>
       <div class="document">`;
-
     selected.forEach((m, idx) => {
       const rendered = renderContentHtml(m.content);
       const safe = DOMPurify.sanitize(rendered, { ALLOWED_TAGS: ['div','span','p','pre','code','br','ul','ol','li','strong','em','h1','h2','h3'], ALLOWED_ATTR: ['class', 'style'] });
@@ -490,12 +514,140 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     clearSelection();
   };
 
+  // Handle file selection (hidden input)
+  const handleFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    // accept only doc or docx
+    const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    if (!allowed.includes(file.type) && !/\.docx?$/.test(file.name)) {
+      setUploadError('Format non supporté — choisissez .doc ou .docx');
+      return;
+    }
+    setUploadError("");
+    setUploadOpen(true);
+    uploadFile(file);
+  };
+
+  const uploadFile = (file) => {
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadError("");
+    setUploadedInfo(null);
+
+    const url = 'http://localhost/ia/public/api/agent_ft/charger_fichier_openai';
+    const form = new FormData();
+    form.append('fichier', file);
+
+    const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
+    xhr.open('POST', url, true);
+    // set auth header
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        setUploadProgress(pct);
+      }
+    };
+
+    xhr.onload = () => {
+      setUploading(false);
+      try {
+        const res = JSON.parse(xhr.responseText || '{}');
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // expected backend response with vector_store_id, file_id, nom_fichier, statut
+          setUploadedInfo(res);
+          setUploadError("");
+          // allow caller to refresh messages or perform follow-up
+          if (typeof refreshMessages === 'function') refreshMessages(true);
+        } else {
+          setUploadError(res.message || 'Erreur upload — code ' + xhr.status);
+        }
+      } catch (err) {
+        setUploadError('Réponse invalide du serveur');
+      }
+      xhrRef.current = null;
+    };
+
+    xhr.onerror = () => {
+      setUploading(false);
+      setUploadError('Erreur réseau lors de l\'upload');
+      xhrRef.current = null;
+    };
+
+    xhr.onabort = () => {
+      setUploading(false);
+      setUploadError('Upload annulé');
+      xhrRef.current = null;
+    };
+
+    xhr.send(form);
+  };
+
+  const cancelUpload = () => {
+    if (xhrRef.current) xhrRef.current.abort();
+    setUploading(false);
+    setUploadProgress(0);
+    setUploadOpen(false);
+  };
+
   return (
     <div className="chat-window">
       {/* Floating action buttons */}
       <div className="floating-actions">
+        <button
+          className="files-toggle-btn"
+          onClick={async () => {
+            const willOpen = !filePanelOpen;
+            setFilePanelOpen(willOpen);
+            if (willOpen && filesList.length === 0 && !filesLoading) {
+              setFilesLoading(true);
+              setFilesError("");
+              try {
+                const query = '{vector_stores(projet_id:8){id,nom_fichier}}';
+                const url = `http://localhost/ia/public/graphql?query=${encodeURIComponent(query)}`;
+                const res = await fetch(url, {
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                  },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const json = await res.json();
+                const list = (json && json.data && json.data.vector_stores) ? json.data.vector_stores : [];
+                setFilesList(Array.isArray(list) ? list : []);
+              } catch (err) {
+                setFilesError(String(err.message || err));
+              } finally {
+                setFilesLoading(false);
+              }
+            }
+          }}
+          title="Afficher les fichiers"
+        >
+          <FaFolderOpen />
+          <span>Fichiers</span>
+        </button>
+        {/* Upload Word file */}
+        <button
+          className="upload-btn"
+          onClick={() => {
+            setUploadError("");
+            setUploadedInfo(null);
+            if (fileInputRef.current) fileInputRef.current.value = null;
+            fileInputRef.current?.click();
+          }}
+          title="Uploader un fichier Word"
+          disabled={uploading}
+        >
+          📁
+          <span>Uploader Word</span>
+        </button>
+
         {!selectMode ? (
-          <button
+          <button 
             className="select-mode-btn"
             onClick={() => setSelectMode(true)}
             title="Sélectionner des messages"
@@ -505,7 +657,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           </button>
         ) : (
           <>
-            <button
+            <button 
               className="download-selected-btn"
               onClick={downloadSelectedAsWord}
               disabled={selectedMessages.length === 0}
@@ -514,7 +666,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
               <FaDownload />
               <span>{selectedMessages.length} sélectionné{selectedMessages.length > 1 ? 's' : ''}</span>
             </button>
-            <button
+            <button 
               className="cancel-select-btn"
               onClick={clearSelection}
               title="Annuler la sélection"
@@ -523,6 +675,37 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             </button>
           </>
         )}
+
+        {/* hidden file input used by upload button */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+        />
+      </div>
+      {/* Floating file panel (volet) */}
+      <div className={`file-panel ${filePanelOpen ? 'open' : ''}`} role="dialog" aria-hidden={!filePanelOpen}>
+        <div className="file-panel-header">
+          <div className="file-panel-title">Fichiers disponibles</div>
+          <button className="file-panel-close" onClick={() => setFilePanelOpen(false)} title="Fermer">✕</button>
+        </div>
+        <div className="file-panel-body">
+          {filesLoading && <div className="files-loader">Chargement...</div>}
+          {filesError && <div className="files-error">Erreur : {filesError}</div>}
+          {!filesLoading && !filesError && filesList && filesList.length === 0 && (
+            <div className="files-empty">Aucun fichier disponible</div>
+          )}
+          <ul className="files-list">
+            {filesList.map(f => (
+              <li className="file-item" key={f.id}>
+                <div className="file-name">{f.nom_fichier || `#${f.id}`}</div>
+                <div className="file-id">ID: {f.id}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
       <div className="chat-title-bar">
         <h1 className="chat-title-gradient">AGENT IA PROJET {projectName && `- ${projectName}`}</h1>
@@ -651,6 +834,36 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         )}
       </div>
 
+      {/* Upload modal / progress */}
+      {(uploadOpen || uploading || uploadedInfo || uploadError) && (
+        <div className="upload-modal">
+          <div className="upload-card">
+            <h3>Upload de fichier Word</h3>
+            {uploading && (
+              <>
+                <div className="upload-progress">
+                  <div className="progress-bar" style={{ width: `${uploadProgress}%` }} />
+                </div>
+                <div className="upload-progress-label">{uploadProgress}%</div>
+              </>
+            )}
+            {uploadedInfo && (
+              <div className="upload-success">Fichier chargé : {uploadedInfo.nom_fichier || uploadedInfo.file_id}</div>
+            )}
+            {uploadError && (
+              <div className="upload-error">{uploadError}</div>
+            )}
+            <div className="upload-actions">
+              {uploading ? (
+                <button className="cancel-upload-btn" onClick={cancelUpload}>Annuler</button>
+              ) : (
+                <button className="close-upload-btn" onClick={() => { setUploadOpen(false); setUploadProgress(0); setUploadError(''); setUploadedInfo(null); }}>Fermer</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {conversationId && (
         <div className="chat-input" style={{ position: 'relative' }}>
           <textarea
@@ -659,19 +872,15 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage(prompt); // ✅ MODIF : même logique que le bouton
+                sendMessage();
+                setPrompt("");
               }
             }}
             placeholder="Votre message..."
             rows={3}
             style={{ paddingRight: (waitingForResponse || typewriterMsg) ? '40px' : undefined }}
           />
-          <button
-            onClick={() => sendMessage(prompt)} // ✅ MODIF : même logique que Enter
-            disabled={sending || !prompt.trim()}
-          >
-            Envoyer
-          </button>
+          <button onClick={sendMessage} disabled={sending || !prompt}>Envoyer</button>
           {(waitingForResponse || typewriterMsg) && (
             <button
               className="stop-btn stop-btn-input"
