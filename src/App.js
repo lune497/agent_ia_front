@@ -49,10 +49,10 @@ function App() {
   };
 
   const handleConversationSelect = async (numericId, stringId, showLoader = true) => {
-    setSelectedConversation(stringId);
-    setSelectedConversationId(numericId);
-    if (showLoader) setLoading(true);
-    setMessages([]);
+     setSelectedConversation(stringId);
+     setSelectedConversationId(numericId);
+     if (showLoader) setLoading(true);
+     setMessages([]);
     try {
       const res = await fetch(`https://lvdc-group.com/ia/public/graphql?query={message_ineds(conversation_ined_id:${numericId}){id,prompt,message_ined_id,content,role}}`, {
         method: 'GET',
@@ -86,8 +86,6 @@ function App() {
       
       const data = await res.json();
       if (data.success) {
-        
-
         const convRes = await fetch(`https://lvdc-group.com/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
           method: 'GET',
           headers: {

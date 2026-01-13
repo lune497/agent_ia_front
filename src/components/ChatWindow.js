@@ -46,8 +46,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     }
   }, [conversationId, displayedMessages]);
 
-
-
   // Bouton scroll haut
   useEffect(() => {
     const chatMessagesDiv = document.querySelector('.chat-messages');
@@ -64,8 +62,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   useEffect(() => {
     setDisplayedMessages(messages);
   }, [messages]);
-
-
 
   // Helper: detecte si la réponse contient du HTML (simple heuristique)
   const isHTMLContent = (text) => {
@@ -118,74 +114,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     };
   }, [typewriterMsg, typewriterContent, refreshMessages]);
 
-  // Envoi message à l'utilisateur
-  const sendConvFirstMessage = async (convId) => {
-
-    if(!convId) return 
-
-  const originalPrompt = 'Qui est tu et en quoi tu peux m\'aider'; // Keep a copy to restore on error
-  setSending(true);
-  setLocalError("");
-  setOptimisticUserMsg({ prompt: originalPrompt });
-  setWaitingForResponse(true);
-  setPrompt(""); // Clear input for better UX
-
-  setTimeout(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, 100);
-
-  const controller = new AbortController();
-  // const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
-
-  try {
-
-
-    const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/addMessageToConversation_ined`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({ message: originalPrompt, conversation_id: convId, projet_name: projectName }),
-      signal: controller.signal, // Pass the signal to the fetch request
-    });
-
-    // clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
-
-    const data = await res.json();
-
-    if (data.success) {
-      setLastResponseId(data.response_id);
-
-      if (window.__chat_polling_interval) {
-        clearInterval(window.__chat_polling_interval);
-        window.__chat_polling_interval = null;
-      }
-
-      pollForResponse(data.response_id,prompt); // Start polling for response
-    } else {
-      setLocalError("Erreur lors de l'ajout du message");
-      setOptimisticUserMsg(null);
-      setWaitingForResponse(false);
-      setPrompt(originalPrompt); // Restore user input on failure
-    }
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      setLocalError("La requête a été annulée en raison du délai d'attente");
-    } else {
-      setLocalError("Erreur d'envoi : " + err.message);
-    }
-    setDisplayedMessages([...displayedMessages,{id:new Date().getTime(),prompt}])
-    setOptimisticUserMsg(null);
-    setWaitingForResponse(false);
-    setPrompt(originalPrompt); // Restore user input on error
-  }
-  setSending(false);
- 
-};
-
 
   // Envoi message utilisateur
   const sendMessage = async () => {
@@ -205,26 +133,31 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   }, 100);
 
   const controller = new AbortController();
-  // const timeoutId = setTimeout(() => controller.abort(), 180000); // 3-minute timeout
+  const timeoutId = setTimeout(() => controller.abort(), 360000); // 6-minute timeout
 
-  try {
-
-
-    const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/addMessageToConversation_ined`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({ message: prompt, conversation_id: conversationId, projet_name: projectName }),
-      signal: controller.signal, // Pass the signal to the fetch request
-    });
-
-    // clearTimeout(timeoutId); // Clear the timeout if the fetch completes successfully
-
-    const data = await res.json();
-
-    if (data.success) {
+ fetch(`https://lvdc-group.com/ia/public/api/restitution/addMessageToConversation_ined`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+  },
+  body: JSON.stringify({
+    message: prompt,
+    conversation_id: conversationId,
+    projet_name: projectName,
+  }),
+  signal: controller.signal,
+})
+  .then(res => {
+    if (!res.ok) {
+      throw new Error(`HTTP error! status: ${res.status}`);
+    }
+    return res.json(); // or res.text() if needed
+  })
+  .then(async(data) => {
+    console.log('Message added:', data);
+    // success logic
+      if (data.success) {
       setLastResponseId(data.response_id);
 
       if (window.__chat_polling_interval) {
@@ -232,27 +165,33 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         window.__chat_polling_interval = null;
       }
 
-      pollForResponse(data.response_id,prompt); // Start polling for response
+       await pollForResponse(data.response_id,prompt); // Start polling for response
     } else {
       setLocalError("Erreur lors de l'ajout du message");
       setOptimisticUserMsg(null);
       setWaitingForResponse(false);
       setPrompt(originalPrompt); // Restore user input on failure
     }
-  } catch (err) {
-    if (err.name === 'AbortError') {
+  })
+  .catch(err => {
+   if (err.name === 'AbortError') {
       setLocalError("La requête a été annulée en raison du délai d'attente");
     } else {
       setLocalError("Erreur d'envoi : " + err.message);
     }
-    setDisplayedMessages([...displayedMessages,{id:new Date().getTime(),prompt}])
     setOptimisticUserMsg(null);
     setWaitingForResponse(false);
     setPrompt(originalPrompt); // Restore user input on error
+  })
+  .finally(() => {
+    clearTimeout(timeoutId)
+    console.log('Add message request finished');
+    setSending(false);
+    // cleanup / loader off
+  });
+
+
   }
-  setSending(false);
- 
-};
 
 
   // Polling réponse IA
@@ -262,7 +201,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     // const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
 
     try {
-      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/getFinalResponseAssistant_ined`, {
+      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/getFinalResponseAssistant`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
