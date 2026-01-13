@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FaUserCircle, FaCheckSquare, FaDownload, FaTimes } from 'react-icons/fa';
+import { FaUserCircle, FaCheckSquare, FaDownload, FaTimes, FaFolderOpen } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
@@ -18,6 +18,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const messagesEndRef = useRef(null);
   const token = localStorage.getItem('token');
   const navigate = useNavigate();
+
   // user display name / initials (for a stylish display)
   const storedUserName = localStorage.getItem('userName') || '';
   const displayName = storedUserName;
@@ -27,6 +28,19 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMessages, setSelectedMessages] = useState([]);
+  // Upload / fichier states
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState("");
+  const [uploadedInfo, setUploadedInfo] = useState(null);
+  const fileInputRef = useRef(null);
+  const xhrRef = useRef(null);
+  // Floating file panel states
+  const [filePanelOpen, setFilePanelOpen] = useState(false);
+  const [filesList, setFilesList] = useState([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesError, setFilesError] = useState("");
 
   // Scroll automatique
   useEffect(() => {
@@ -146,7 +160,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     conversation_id: conversationId,
     projet_name: projectName,
   }),
-  signal: controller.signal,
+  // signal: controller.signal,
 })
   .then(res => {
     if (!res.ok) {
@@ -184,7 +198,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     setPrompt(originalPrompt); // Restore user input on error
   })
   .finally(() => {
-    clearTimeout(timeoutId)
     console.log('Add message request finished');
     setSending(false);
     // cleanup / loader off
@@ -423,12 +436,24 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       });
 
       // 7) paragraphs: split on double newlines
-      const parts = working.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 0);
-      working = parts.map(p => {
-        if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(p)) return p;
-        const withBreaks = p.replace(/\n/g, '<br/>');
-        return `<p>${withBreaks}</p>`;
-      }).join('\n');
+      const hasDoubleNewline = /\n\s*\n/.test(working);
+
+      if (hasDoubleNewline) {
+        const parts = working.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 0);
+        working = parts.map(p => {
+          if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(p)) return p;
+          const withBreaks = p.replace(/\n/g, '<br/>');
+          const isVerbatim = !withBreaks.includes('<strong>');
+          return `<p class="${isVerbatim ? 'verbatim' : ''}">${withBreaks}</p>`;
+        }).join('\n');
+      } else {
+        const lines = working.split('\n').map(l => l.trim()).filter(Boolean);
+        working = lines.map(l => {
+          if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(l)) return l;
+          const isVerbatim = !l.includes('<strong>');
+          return `<p class="${isVerbatim ? 'verbatim' : ''}">${l}</p>`;
+        }).join('\n');
+      }
 
       // 8) re-insert inline code and code blocks
       working = working.replace(/<!--INLINE_CODE_(\d+)-->/g, (m, i) => inlineCodes[Number(i)] || '');
@@ -445,7 +470,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     // build HTML document (Word can open HTML saved as .doc)
     let bodyHtml = `
         <style>
-          /* Minimal, document-wide formatting requested by user */
           body, .document, .message, .message-content, p, div {
             font-family: 'Aptos', Calibri, Arial, sans-serif;
             font-size: 11pt;
@@ -455,12 +479,17 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             margin: 0;
             padding: 0;
           }
-          /* Ensure paragraphs have no extra spacing before/after */
-          p { margin-top: 0; margin-bottom: 0; }
-          /* Keep code blocks monospaced but do not introduce extra margins */
+          p {
+            margin-top: 0;
+            margin-bottom: 0;
+            line-height: 15pt;
+            mso-line-height-rule: exactly;
+            text-align: left;
+          }
+          h2:first-of-type { text-align: center; }
           pre, code { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; margin: 0; padding: 0; }
-          /* Prevent page-break splitting individual messages when printing/Word */
           .message { page-break-inside: avoid; }
+          .message + .message { margin-top: 10pt; }
         </style>
       <div class="document">`;
     selected.forEach((m, idx) => {
@@ -486,10 +515,148 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     clearSelection();
   };
 
+  // Handle file selection (hidden input)
+  const handleFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    // accept only doc or docx
+    const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    if (!allowed.includes(file.type) && !/\.docx?$/.test(file.name)) {
+      setUploadError('Format non supporté — choisissez .doc ou .docx');
+      return;
+    }
+    setUploadError("");
+    setUploadOpen(true);
+    uploadFile(file);
+  };
+
+  const uploadFile = (file) => {
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadError("");
+    setUploadedInfo(null);
+
+    const url = 'https://lvdc-group.com/ia/public/api/agent_ft/charger_fichier_openai';
+    const form = new FormData();
+    form.append('fichier', file);
+
+    const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
+    xhr.open('POST', url, true);
+    // set auth header
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        setUploadProgress(pct);
+      }
+    };
+
+    xhr.onload = () => {
+      setUploading(false);
+      try {
+        const res = JSON.parse(xhr.responseText || '{}');
+        console?.log("error respo 1",res)
+        if(res?.original?.response){
+          setUploadError(res?.original?.response);
+          return
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // expected backend response with vector_store_id, file_id, nom_fichier, statut
+          setUploadedInfo(res);
+          setUploadError("");
+          // allow caller to refresh messages or perform follow-up
+          if (typeof refreshMessages === 'function') refreshMessages(true);
+        } else {
+          setUploadError(res.message || 'Erreur upload — code ' + xhr.status);
+          console?.log("error xhr",xhr)
+          console?.log("error respo",res)
+        }
+      } catch (err) {
+        setUploadError('Réponse invalide du serveur');
+        console?.log("error response",err)
+      }
+      xhrRef.current = null;
+    };
+
+    xhr.onerror = () => {
+      setUploading(false);
+      setUploadError('Erreur réseau lors de l\'upload');
+      xhrRef.current = null;
+    };
+
+    xhr.onabort = () => {
+      setUploading(false);
+      setUploadError('Upload annulé');
+      xhrRef.current = null;
+    };
+
+    xhr.send(form);
+  };
+
+  const cancelUpload = () => {
+    if (xhrRef.current) xhrRef.current.abort();
+    setUploading(false);
+    setUploadProgress(0);
+    setUploadOpen(false);
+  };
+
   return (
     <div className="chat-window">
       {/* Floating action buttons */}
-      <div className="floating-actions">
+      <div className="floating-actions" style={{gap:3}}>
+        <button
+          className="files-toggle-btn"
+          style={{marginBottom:4}}
+          onClick={async () => {
+            const willOpen = !filePanelOpen;
+            setFilePanelOpen(willOpen);
+            if (willOpen && filesList.length === 0 && !filesLoading) {
+              setFilesLoading(true);
+              setFilesError("");
+              try {
+                const query = '{vector_stores(projet_id:8){id,nom_fichier}}';
+                const url = `https://lvdc-group.com/ia/public/graphql?query=${encodeURIComponent(query)}`;
+                const res = await fetch(url, {
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                  },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const json = await res.json();
+                const list = (json && json.data && json.data.vector_stores) ? json.data.vector_stores : [];
+                setFilesList(Array.isArray(list) ? list : []);
+              } catch (err) {
+                setFilesError(String(err.message || err));
+              } finally {
+                setFilesLoading(false);
+              }
+            }
+          }}
+          title="Afficher les fichiers"
+        >
+          <FaFolderOpen />
+          <span>Fichiers</span>
+        </button>
+        {/* Upload Word file */}
+        <button
+          className="upload-btn"
+          style={{marginBottom:4}}
+          onClick={() => {
+            setUploadError("");
+            setUploadedInfo(null);
+            if (fileInputRef.current) fileInputRef.current.value = null;
+            fileInputRef.current?.click();
+          }}
+          title="Uploader un fichier Word"
+          disabled={uploading}
+        >
+          📁
+          <span>Uploader Word</span>
+        </button>
+
         {!selectMode ? (
           <button 
             className="select-mode-btn"
@@ -519,6 +686,37 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             </button>
           </>
         )}
+
+        {/* hidden file input used by upload button */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+        />
+      </div>
+      {/* Floating file panel (volet) */}
+      <div className={`file-panel ${filePanelOpen ? 'open' : ''}`} role="dialog" aria-hidden={!filePanelOpen}>
+        <div className="file-panel-header">
+          <div className="file-panel-title">Fichiers disponibles</div>
+          <button className="file-panel-close" onClick={() => setFilePanelOpen(false)} title="Fermer">✕</button>
+        </div>
+        <div className="file-panel-body">
+          {filesLoading && <div className="files-loader">Chargement...</div>}
+          {filesError && <div className="files-error">Erreur : {filesError}</div>}
+          {!filesLoading && !filesError && filesList && filesList.length === 0 && (
+            <div className="files-empty">Aucun fichier disponible</div>
+          )}
+          <ul className="files-list">
+            {filesList.map(f => (
+              <li className="file-item" key={f.id}>
+                <div className="file-name">{f.nom_fichier || `#${f.id}`}</div>
+                <div className="file-id">ID: {f.id}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
       <div className="chat-title-bar">
         <h1 className="chat-title-gradient">AGENT IA PROJET {projectName && `- ${projectName}`}</h1>
@@ -646,6 +844,36 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           </button>
         )}
       </div>
+
+      {/* Upload modal / progress */}
+      {(uploadOpen || uploading || uploadedInfo || uploadError) && (
+        <div className="upload-modal">
+          <div className="upload-card">
+            <h3>Upload de fichier Word</h3>
+            {uploading && (
+              <>
+                <div className="upload-progress">
+                  <div className="progress-bar" style={{ width: `${uploadProgress}%` }} />
+                </div>
+                <div className="upload-progress-label">{uploadProgress}%</div>
+              </>
+            )}
+            {uploadedInfo && (
+              <div className="upload-success">Fichier chargé : {uploadedInfo.nom_fichier || uploadedInfo.file_id}</div>
+            )}
+            {uploadError && (
+              <div className="upload-error">{uploadError}</div>
+            )}
+            <div className="upload-actions">
+              {uploading ? (
+                <button className="cancel-upload-btn" onClick={cancelUpload}>Annuler</button>
+              ) : (
+                <button className="close-upload-btn" onClick={() => { setUploadOpen(false); setUploadProgress(0); setUploadError(''); setUploadedInfo(null); }}>Fermer</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {conversationId && (
         <div className="chat-input" style={{ position: 'relative' }}>
