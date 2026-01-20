@@ -41,6 +41,46 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [filesList, setFilesList] = useState([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [filesError, setFilesError] = useState("");
+  // Side panel state
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  // Notification states
+  const [showHamburgerTip, setShowHamburgerTip] = useState(true);
+  const [showPromptsTip, setShowPromptsTip] = useState(true);
+
+  // Prompts prédéfinis
+  const predefinedPrompts = [
+    {
+      id: 1,
+      label: "VÉRIFICATION DES QUESTIONS",
+      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie VÉRIFICATION DES QUESTIONS"
+    },
+    {
+      id: 2,
+      label: "AMÉLIORATION DE LA FORMULATION",
+      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie AMÉLIORATION DE LA FORMULATION"
+    },
+    {
+      id: 3,
+      label: "VÉRIFICATION DES FILTRES",
+      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie VÉRIFICATION DES FILTRES"
+    },
+    {
+      id: 4,
+      label: "COHÉRENCE DES MODALITÉS",
+      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie COHÉRENCE DES MODALITÉS"
+    },
+    {
+      id: 5,
+      label: "CRÉATION DE L'ARGUMENTAIRE CATI",
+      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie CRÉATION DE L'ARGUMENTAIRE CATI"
+    },
+    {
+      id: 6,
+      label: "CRÉATION DE LA PRISE DE CONGÉ",
+      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie CRÉATION DE LA PRISE DE CONGÉ"
+    },
+    // Ajoutez d'autres prompts ici si nécessaire
+  ];
 
   // Scroll automatique
   useEffect(() => {
@@ -76,6 +116,26 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   useEffect(() => {
     setDisplayedMessages(messages);
   }, [messages]);
+
+  // Auto-hide hamburger tip after 6 seconds
+  useEffect(() => {
+    if (showHamburgerTip) {
+      const timer = setTimeout(() => {
+        setShowHamburgerTip(false);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [showHamburgerTip]);
+
+  // Auto-hide prompts tip after 6 seconds
+  useEffect(() => {
+    if (showPromptsTip) {
+      const timer = setTimeout(() => {
+        setShowPromptsTip(false);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [showPromptsTip]);
 
   // Helper: detecte si la réponse contient du HTML (simple heuristique)
   const isHTMLContent = (text) => {
@@ -149,7 +209,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 360000); // 6-minute timeout
 
- fetch(`https://lvdc-group.com/ia/public/api/restitution/addMessageToConversation_ined`, {
+ fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -207,6 +267,74 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   }
 
 
+  // Envoi message prédéfini
+  const sendPredefinedPrompt = async (predefinedPromptText) => {
+    if (!predefinedPromptText || !conversationId) return;
+
+    setSending(true);
+    setLocalError("");
+    setOptimisticUserMsg({ prompt: predefinedPromptText });
+    setWaitingForResponse(true);
+
+    setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 360000); // 6-minute timeout
+
+    fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        message: predefinedPromptText,
+        conversation_id: conversationId,
+        projet_name: projectName,
+      }),
+    })
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then(async(data) => {
+        console.log('Message added:', data);
+        if (data.success) {
+          setLastResponseId(data.response_id);
+
+          if (window.__chat_polling_interval) {
+            clearInterval(window.__chat_polling_interval);
+            window.__chat_polling_interval = null;
+          }
+
+          await pollForResponse(data.response_id, predefinedPromptText);
+        } else {
+          setLocalError("Erreur lors de l'ajout du message");
+          setOptimisticUserMsg(null);
+          setWaitingForResponse(false);
+        }
+      })
+      .catch(err => {
+        if (err.name === 'AbortError') {
+          setLocalError("La requête a été annulée en raison du délai d'attente");
+        } else {
+          setLocalError("Erreur d'envoi : " + err.message);
+        }
+        setOptimisticUserMsg(null);
+        setWaitingForResponse(false);
+      })
+      .finally(() => {
+        setSending(false);
+      });
+  }
+
+
   // Polling réponse IA
   const pollForResponse = async (responseId,prompt) => {
   // window.__chat_polling_interval = setInterval(async () => {
@@ -214,7 +342,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     // const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
 
     try {
-      const res = await fetch(`https://lvdc-group.com/ia/public/api/restitution/getFinalResponseAssistant`, {
+      const res = await fetch(`http://localhost/ia/public/api/restitution/getFinalResponseAssistant`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -536,7 +664,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     setUploadError("");
     setUploadedInfo(null);
 
-    const url = 'https://lvdc-group.com/ia/public/api/agent_ft/charger_fichier_openai';
+    const url = 'http://localhost/ia/public/api/agent_ft/charger_fichier_openai';
     const form = new FormData();
     form.append('fichier', file);
 
@@ -604,98 +732,167 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
   return (
     <div className="chat-window">
-      {/* Floating action buttons */}
-      <div className="floating-actions" style={{gap:3}}>
-        <button
-          className="files-toggle-btn"
-          style={{marginBottom:4}}
-          onClick={async () => {
-            const willOpen = !filePanelOpen;
-            setFilePanelOpen(willOpen);
-            if (willOpen && filesList.length === 0 && !filesLoading) {
-              setFilesLoading(true);
-              setFilesError("");
-              try {
-                const query = '{vector_stores(projet_id:8){id,nom_fichier}}';
-                const url = `https://lvdc-group.com/ia/public/graphql?query=${encodeURIComponent(query)}`;
-                const res = await fetch(url, {
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-                  },
-                });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const json = await res.json();
-                const list = (json && json.data && json.data.vector_stores) ? json.data.vector_stores : [];
-                setFilesList(Array.isArray(list) ? list : []);
-              } catch (err) {
-                setFilesError(String(err.message || err));
-              } finally {
-                setFilesLoading(false);
-              }
-            }
-          }}
-          title="Afficher les fichiers"
-        >
-          <FaFolderOpen />
-          <span>Fichiers</span>
-        </button>
-        {/* Upload Word file */}
-        <button
-          className="upload-btn"
-          style={{marginBottom:4}}
-          onClick={() => {
-            setUploadError("");
-            setUploadedInfo(null);
-            if (fileInputRef.current) fileInputRef.current.value = null;
-            fileInputRef.current?.click();
-          }}
-          title="Uploader un fichier Word"
-          disabled={uploading}
-        >
-          📁
-          <span>Uploader Word</span>
-        </button>
-
-        {!selectMode ? (
+      {/* Notification pour hamburger menu */}
+      {showHamburgerTip && (
+        <div className="notification-tip hamburger-tip">
+          <div className="notification-content">
+            <span className="notification-icon">📌</span>
+            <span className="notification-text">Cliquez sur l'icône hamburger pour accéder aux options (fichiers, upload, téléchargement)</span>
+          </div>
           <button 
-            className="select-mode-btn"
-            onClick={() => setSelectMode(true)}
-            title="Sélectionner des messages"
+            className="notification-close"
+            onClick={() => setShowHamburgerTip(false)}
+            title="Fermer"
           >
-            <FaCheckSquare />
-            <span>Télécharger Word</span>
+            ✕
           </button>
-        ) : (
-          <>
-            <button 
-              className="download-selected-btn"
-              onClick={downloadSelectedAsWord}
-              disabled={selectedMessages.length === 0}
-              title="Télécharger la sélection"
-            >
-              <FaDownload />
-              <span>{selectedMessages.length} sélectionné{selectedMessages.length > 1 ? 's' : ''}</span>
-            </button>
-            <button 
-              className="cancel-select-btn"
-              onClick={clearSelection}
-              title="Annuler la sélection"
-            >
-              <FaTimes />
-            </button>
-          </>
-        )}
+        </div>
+      )}
 
-        {/* hidden file input used by upload button */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          style={{ display: 'none' }}
-          onChange={handleFileChange}
-        />
+      {/* Notification pour prompts définis */}
+      {showPromptsTip && projectName === 'AGENT-FT' && (
+        <div className="notification-tip prompts-tip">
+          <div className="notification-content">
+            <span className="notification-icon">💡</span>
+            <span className="notification-text">Utilisez les prompts recommandés ci-dessous pour démarrer rapidement votre analyse</span>
+          </div>
+          <button 
+            className="notification-close"
+            onClick={() => setShowPromptsTip(false)}
+            title="Fermer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Hamburger button to toggle side panel */}
+      <button 
+        className="hamburger-toggle-btn"
+        onClick={() => setSidePanelOpen(!sidePanelOpen)}
+        title="Ouvrir le menu"
+        style={{ display: sidePanelOpen ? 'none' : 'flex' }}
+      >
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+
+      {/* Side panel with action buttons */}
+      <div className={`side-actions-panel ${sidePanelOpen ? 'open' : ''}`}>
+        <div className="side-panel-header">
+          <h3>Actions</h3>
+          <button 
+            className="side-panel-close"
+            onClick={() => setSidePanelOpen(false)}
+            title="Fermer"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="side-panel-content">
+          {/* Files button */}
+          <button
+            className="files-toggle-btn"
+            onClick={async () => {
+              const willOpen = !filePanelOpen;
+              setFilePanelOpen(willOpen);
+              if (willOpen && filesList.length === 0 && !filesLoading) {
+                setFilesLoading(true);
+                setFilesError("");
+                try {
+                  const query = '{vector_stores(projet_id:8){id,nom_fichier}}';
+                  const url = `http://localhost/ia/public/graphql?query=${encodeURIComponent(query)}`;
+                  const res = await fetch(url, {
+                    headers: {
+                      'Content-Type': 'application/json',
+                      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                    },
+                  });
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  const json = await res.json();
+                  const list = (json && json.data && json.data.vector_stores) ? json.data.vector_stores : [];
+                  setFilesList(Array.isArray(list) ? list : []);
+                } catch (err) {
+                  setFilesError(String(err.message || err));
+                } finally {
+                  setFilesLoading(false);
+                }
+              }
+            }}
+            title="Afficher les fichiers"
+          >
+            <FaFolderOpen />
+            <span>Fichiers</span>
+          </button>
+
+          {/* Upload Word file */}
+          <button
+            className="upload-btn"
+            onClick={() => {
+              setUploadError("");
+              setUploadedInfo(null);
+              if (fileInputRef.current) fileInputRef.current.value = null;
+              fileInputRef.current?.click();
+            }}
+            title="Uploader un fichier Word"
+            disabled={uploading}
+          >
+            📁
+            <span>Uploader Word</span>
+          </button>
+
+          {/* Download Word / Select mode */}
+          {!selectMode ? (
+            <button 
+              className="select-mode-btn"
+              onClick={() => setSelectMode(true)}
+              title="Sélectionner des messages"
+            >
+              <FaCheckSquare />
+              <span>Télécharger une réponse</span>
+            </button>
+          ) : (
+            <>
+              <button 
+                className="download-selected-btn"
+                onClick={downloadSelectedAsWord}
+                disabled={selectedMessages.length === 0}
+                title="Télécharger la sélection"
+              >
+                <FaDownload />
+                <span>{selectedMessages.length} sélectionné{selectedMessages.length > 1 ? 's' : ''}</span>
+              </button>
+              <button 
+                className="cancel-select-btn"
+                onClick={clearSelection}
+                title="Annuler la sélection"
+              >
+                <FaTimes />
+              </button>
+            </>
+          )}
+
+          {/* hidden file input used by upload button */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
+        </div>
       </div>
+
+      {/* Overlay when side panel is open */}
+      {sidePanelOpen && (
+        <div 
+          className="side-panel-overlay"
+          onClick={() => setSidePanelOpen(false)}
+        />
+      )}
+
       {/* Floating file panel (volet) */}
       <div className={`file-panel ${filePanelOpen ? 'open' : ''}`} role="dialog" aria-hidden={!filePanelOpen}>
         <div className="file-panel-header">
@@ -871,6 +1068,27 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
                 <button className="close-upload-btn" onClick={() => { setUploadOpen(false); setUploadProgress(0); setUploadError(''); setUploadedInfo(null); }}>Fermer</button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Section prompts prédéfinis */}
+      {conversationId && displayedMessages.length === 0 && projectName === 'AGENT-FT' && (
+        
+        <div className="predefined-prompts-section">
+          <h3 className="predefined-prompts-title">Prompts recommandés</h3>
+          <div className="predefined-prompts-grid">
+            {predefinedPrompts.map((pdPrompt) => (
+              <button
+                key={pdPrompt.id}
+                className="predefined-prompt-card"
+                onClick={() => sendPredefinedPrompt(pdPrompt.prompt)}
+                disabled={sending || waitingForResponse}
+              >
+                <span className="prompt-card-text">{pdPrompt.label}</span>
+                <span className="prompt-card-arrow">→</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
