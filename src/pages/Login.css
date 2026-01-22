@@ -56,10 +56,10 @@ input:focus {
 select {
   padding: 12px;
   font-size: 16px;
-  border: 1px solid #ccc;
+  border: 1px solid #520606;
   border-radius: 5px;
   outline: none;
-  background-color: #fff;
+  background-color: #d7e5f3;
   color: #333;
   cursor: pointer;
   transition: border-color 0.3s, background-color 0.3s;

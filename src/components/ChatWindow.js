@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
 import './ChatWindow.css';
 
-const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages, conversationIdInt }) => {
+const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages, conversationIdInt, promptToSend, onPromptSent }) => {
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState("");
@@ -43,9 +43,8 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [filesError, setFilesError] = useState("");
   // Side panel state
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
-  // Notification states
-  const [showHamburgerTip, setShowHamburgerTip] = useState(true);
-  const [showPromptsTip, setShowPromptsTip] = useState(true);
+  // Selected file for prompts
+  const [selectedFile, setSelectedFile] = useState(null);
 
   // Prompts prédéfinis
   const predefinedPrompts = [
@@ -117,30 +116,35 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     setDisplayedMessages(messages);
   }, [messages]);
 
-  // Auto-hide hamburger tip after 6 seconds
+  // Handle prompt from PromptSelector
   useEffect(() => {
-    if (showHamburgerTip) {
-      const timer = setTimeout(() => {
-        setShowHamburgerTip(false);
-      }, 6000);
-      return () => clearTimeout(timer);
+    if (promptToSend && promptToSend.trim()) {
+      setPrompt(promptToSend);
+      // Auto-send the prompt after a small delay to ensure UI has updated
+      setTimeout(() => {
+        sendMessage(promptToSend);
+        if (onPromptSent) {
+          onPromptSent();
+        }
+      }, 100);
     }
-  }, [showHamburgerTip]);
+  }, [promptToSend]);
 
-  // Auto-hide prompts tip after 6 seconds
-  useEffect(() => {
-    if (showPromptsTip) {
-      const timer = setTimeout(() => {
-        setShowPromptsTip(false);
-      }, 6000);
-      return () => clearTimeout(timer);
-    }
-  }, [showPromptsTip]);
+
 
   // Helper: detecte si la réponse contient du HTML (simple heuristique)
   const isHTMLContent = (text) => {
     if (!text) return false;
     return /<\/?[a-z][\s\S]*>/i.test(text);
+  };
+
+  // Helper: render HTML content with sanitization, allowing spans with styles
+  const renderSafeHTML = (htmlContent) => {
+    const cleaned = DOMPurify.sanitize(htmlContent, {
+      ALLOWED_TAGS: ['span', 'div', 'p', 'br', 'strong', 'em', 'b', 'i', 'u', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'pre', 'code'],
+      ALLOWED_ATTR: ['style', 'class']
+    });
+    return cleaned;
   };
 
   // Effet typewriter
@@ -190,15 +194,18 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
 
   // Envoi message utilisateur
-  const sendMessage = async () => {
-  if (!prompt || !conversationId) return;
+  const sendMessage = async (textToSend) => {
+  const messageText = textToSend || prompt;
+  if (!messageText || !conversationId) return;
 
-  const originalPrompt = prompt; // Keep a copy to restore on error
+  const originalPrompt = messageText; // Keep a copy to restore on error
   setSending(true);
   setLocalError("");
   setOptimisticUserMsg({ prompt: originalPrompt });
   setWaitingForResponse(true);
-  setPrompt(""); // Clear input for better UX
+  if (!textToSend) {
+    setPrompt(""); // Clear input for better UX (only if not from PromptSelector)
+  }
 
   setTimeout(() => {
     if (messagesEndRef.current) {
@@ -216,7 +223,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     'Authorization': `Bearer ${token}`,
   },
   body: JSON.stringify({
-    message: prompt,
+    message: messageText,
     conversation_id: conversationId,
     projet_name: projectName,
   }),
@@ -239,12 +246,14 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         window.__chat_polling_interval = null;
       }
 
-       await pollForResponse(data.response_id,prompt); // Start polling for response
+       await pollForResponse(data.response_id, messageText); // Start polling for response
     } else {
       setLocalError("Erreur lors de l'ajout du message");
       setOptimisticUserMsg(null);
       setWaitingForResponse(false);
-      setPrompt(originalPrompt); // Restore user input on failure
+      if (!textToSend) {
+        setPrompt(originalPrompt); // Restore user input on failure
+      }
     }
   })
   .catch(err => {
@@ -271,9 +280,15 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const sendPredefinedPrompt = async (predefinedPromptText) => {
     if (!predefinedPromptText || !conversationId) return;
 
+    // Replace placeholder with selected file name if available
+    let finalPrompt = predefinedPromptText;
+    if (selectedFile) {
+      finalPrompt = predefinedPromptText.replace('Intensif avant.docx', selectedFile.nom_fichier);
+    }
+
     setSending(true);
     setLocalError("");
-    setOptimisticUserMsg({ prompt: predefinedPromptText });
+    setOptimisticUserMsg({ prompt: finalPrompt });
     setWaitingForResponse(true);
 
     setTimeout(() => {
@@ -292,7 +307,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({
-        message: predefinedPromptText,
+        message: finalPrompt,
         conversation_id: conversationId,
         projet_name: projectName,
       }),
@@ -313,7 +328,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             window.__chat_polling_interval = null;
           }
 
-          await pollForResponse(data.response_id, predefinedPromptText);
+          await pollForResponse(data.response_id, finalPrompt);
         } else {
           setLocalError("Erreur lors de l'ajout du message");
           setOptimisticUserMsg(null);
@@ -732,40 +747,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
 
   return (
     <div className="chat-window">
-      {/* Notification pour hamburger menu */}
-      {showHamburgerTip && (
-        <div className="notification-tip hamburger-tip">
-          <div className="notification-content">
-            <span className="notification-icon">📌</span>
-            <span className="notification-text">Cliquez sur l'icône hamburger pour accéder aux options (fichiers, upload, téléchargement)</span>
-          </div>
-          <button 
-            className="notification-close"
-            onClick={() => setShowHamburgerTip(false)}
-            title="Fermer"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Notification pour prompts définis */}
-      {showPromptsTip && projectName === 'AGENT-FT' && (
-        <div className="notification-tip prompts-tip">
-          <div className="notification-content">
-            <span className="notification-icon">💡</span>
-            <span className="notification-text">Utilisez les prompts recommandés ci-dessous pour démarrer rapidement votre analyse</span>
-          </div>
-          <button 
-            className="notification-close"
-            onClick={() => setShowPromptsTip(false)}
-            title="Fermer"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
       {/* Hamburger button to toggle side panel */}
       <button 
         className="hamburger-toggle-btn"
@@ -905,9 +886,25 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           {!filesLoading && !filesError && filesList && filesList.length === 0 && (
             <div className="files-empty">Aucun fichier disponible</div>
           )}
+          {selectedFile && (
+            <div style={{ padding: '12px', marginBottom: '12px', backgroundColor: '#e0e7ff', borderRadius: '8px', borderLeft: '4px solid #6366f1' }}>
+              <strong>Fichier sélectionné:</strong> {selectedFile.nom_fichier}
+            </div>
+          )}
           <ul className="files-list">
             {filesList.map(f => (
-              <li className="file-item" key={f.id}>
+              <li 
+                className="file-item" 
+                key={f.id}
+                onClick={() => setSelectedFile(f)}
+                style={{
+                  cursor: 'pointer',
+                  backgroundColor: selectedFile?.id === f.id ? '#dbeafe' : 'transparent',
+                  borderLeft: selectedFile?.id === f.id ? '4px solid #3b82f6' : 'none',
+                  paddingLeft: selectedFile?.id === f.id ? '12px' : '16px',
+                  transition: 'all 0.2s'
+                }}
+              >
                 <div className="file-name">{f.nom_fichier || `#${f.id}`}</div>
                 <div className="file-id">ID: {f.id}</div>
               </li>
@@ -984,7 +981,12 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         {displayedMessages?.sort((a, b) => a.id - b.id)?.map((msg) => (
           <div key={msg.id} className="message">
             {msg.prompt && (
-              <div className="user-message styled-user-message"><strong>Vous :</strong> {msg.prompt}</div>
+              <div className="user-message styled-user-message">
+                <strong style={{ fontSize: '1.1em', color: '#4f46e5' }}>Vous :</strong> 
+                <span style={{ fontSize: '1.05em', fontWeight: '600', color: '#030806', marginLeft: '8px', lineHeight: '1.6' }}>
+                  {msg.prompt}
+                </span>
+              </div>
             )}
             {msg.content && (
               <div className="ai-message styled-ai-message">
@@ -999,8 +1001,11 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
                 )}
                 <strong>Agent IA :</strong>
                 <div className="formatted-content">
-                  {/* ✅ Rendu Markdown à la place du split en phrases */}
-                  <ReactMarkdown >{msg.content}</ReactMarkdown>
+                  {isHTMLContent(msg.content) ? (
+                    <div dangerouslySetInnerHTML={{ __html: renderSafeHTML(msg.content) }} />
+                  ) : (
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  )}
                 </div>
               </div>
             )}
@@ -1008,7 +1013,12 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         ))}
         {optimisticUserMsg && (
           <div className="message">
-            <div className="user-message styled-user-message"><strong>Vous :</strong> {optimisticUserMsg.prompt}</div>
+            <div className="user-message styled-user-message">
+              <strong style={{ fontSize: '1.1em', color: '#4f46e5' }}>Vous :</strong> 
+              <span style={{ fontSize: '1.05em', fontWeight: '600', color: '#1f2937', marginLeft: '8px', lineHeight: '1.6' }}>
+                {optimisticUserMsg.prompt}
+              </span>
+            </div>
           </div>
         )}
         {waitingForResponse && !typewriterMsg && (
@@ -1020,7 +1030,11 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           <div className="ai-message styled-ai-message">
             <strong>Agent IA :</strong>
             <div className="formatted-content">
-              <ReactMarkdown >{typewriterContent}</ReactMarkdown>
+              {isHTMLContent(typewriterContent) ? (
+                <div dangerouslySetInnerHTML={{ __html: renderSafeHTML(typewriterContent) }} />
+              ) : (
+                <ReactMarkdown>{typewriterContent}</ReactMarkdown>
+              )}
             </div>
           </div>
         )}

@@ -14,6 +14,7 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [promptToSend, setPromptToSend] = useState("");
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
   const userId = localStorage.getItem('userId');
@@ -113,6 +114,11 @@ function App() {
     setLoading(false);
   };
 
+  // Handle prompt submission from PromptSelector
+  const handlePromptSubmit = (promptText) => {
+    setPromptToSend(promptText);
+  };
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
@@ -125,15 +131,17 @@ function App() {
               onConversationSelect={(id, conv_id) => handleConversationSelect(id, conv_id)}
               onNewConversation={handleNewConversation}
               selectedConversation={selectedConversation}
+              onPromptSubmit={handlePromptSubmit}
             />
             {!loading && <ChatWindow
               conversationId={selectedConversation}
               conversationIdInt={selectedConversationId}
-              // newConversationId={newConversationId}
               messages={messages}
               loading={loading}
               error={error}
               refreshMessages={() => handleConversationSelect(selectedConversationId, selectedConversation)}
+              promptToSend={promptToSend}
+              onPromptSent={() => setPromptToSend("")}
             />}
           </div>
         }
