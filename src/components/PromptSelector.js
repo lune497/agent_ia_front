@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './PromptSelector.css';
 
-const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation, token, projectName }) => {
+const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation, token, projectName,projectId }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [filesList, setFilesList] = useState([]);
   const [filesLoading, setFilesLoading] = useState(false);
@@ -12,6 +12,9 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
   const [uploadedInfo, setUploadedInfo] = useState(null);
   const fileInputRef = useRef(null);
   const xhrRef = useRef(null);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
 
   // Prompts prédéfinis
   const predefinedPrompts = [
@@ -58,7 +61,7 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
     setFilesLoading(true);
     setFilesError("");
     try {
-      const query = '{vector_stores(projet_id:8){id,nom_fichier}}';
+      const query = `{vector_stores(projet_id:${projectId}){id,nom_fichier,chemin_stockage}}`;
       const url = `http://localhost/ia/public/graphql?query=${encodeURIComponent(query)}`;
       const res = await fetch(url, {
         headers: {
@@ -81,9 +84,11 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
     const file = e.target.files?.[0];
     if (file) {
       // Validate file type
-      const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-      if (!allowed.includes(file.type) && !/\.docx?$/.test(file.name)) {
-        setUploadError('Format non supporté — choisissez .doc ou .docx');
+      const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/pdf'];
+      const hasValidType = allowed.includes(file.type);
+      const hasValidExtension = /\.(?:docx?|pdf)$/i.test(file.name);
+      if (!hasValidType && !hasValidExtension) {
+        setUploadError('Format non supporté — choisissez .doc, .docx ou .pdf');
         return;
       }
       setUploadError("");
@@ -188,6 +193,66 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
     fileInputRef.current?.click();
   };
 
+  const openFilePreview = async (file) => {
+    setPreviewFile(null);
+    setPreviewLoading(true);
+    setPreviewError("");
+
+    try {
+      if (!file.chemin_stockage) {
+        setPreviewError("Chemin du fichier non disponible");
+        setPreviewLoading(false);
+        return;
+      }
+
+      // Déterminer le type de fichier
+      const isWordDoc = /\.docx?$/i.test(file.nom_fichier);
+      const isPdf = /\.pdf$/i.test(file.nom_fichier);
+
+      if (isWordDoc) {
+        // Pour les fichiers Word, on utilise mammoth ou on affiche juste le fichier
+        const response = await fetch(file.chemin_stockage, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
+
+        if (!response.ok) {
+          throw new Error("Impossible de charger le fichier");
+        }
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+
+        setPreviewFile({
+          type: 'word',
+          nom_fichier: file.nom_fichier,
+          url: url,
+          blob: blob,
+        });
+      } else if (isPdf) {
+        // Pour les PDF, on utilise un iframe
+        setPreviewFile({
+          type: 'pdf',
+          nom_fichier: file.nom_fichier,
+          chemin_stockage: file.chemin_stockage,
+        });
+      } else {
+        setPreviewError("Format de fichier non supporté pour l'aperçu");
+      }
+    } catch (err) {
+      setPreviewError(String(err.message || err));
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const closePreview = () => {
+    if (previewFile?.url) {
+      URL.revokeObjectURL(previewFile.url);
+    }
+    setPreviewFile(null);
+    setPreviewError("");
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -229,6 +294,16 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
                   style={{ marginRight: '8px' }}
                 />
                 <span className="file-list-name">{f.nom_fichier || `Fichier #${f.id}`}</span>
+                <button
+                  className="file-preview-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openFilePreview(f);
+                  }}
+                  title="Afficher un aperçu du fichier"
+                >
+                  👁️
+                </button>
               </li>
             ))}
           </ul>
@@ -317,6 +392,53 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
                     setUploadError("");
                     setUploadedInfo(null);
                   }}>Fermer</button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* File Preview Modal */}
+        {previewFile && (
+          <div className="preview-modal-overlay" onClick={closePreview}>
+            <div className="preview-modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="preview-modal-header">
+                <h3>{previewFile.nom_fichier}</h3>
+                <button className="preview-close-btn" onClick={closePreview}>✕</button>
+              </div>
+
+              <div className="preview-modal-body">
+                {previewLoading && (
+                  <div className="preview-loader">Chargement du fichier...</div>
+                )}
+                {previewError && (
+                  <div className="preview-error">Erreur : {previewError}</div>
+                )}
+
+                {previewFile.type === 'pdf' && !previewLoading && (
+                  <iframe
+                    src={previewFile.chemin_stockage}
+                    className="pdf-preview-frame"
+                    title={previewFile.nom_fichier}
+                  />
+                )}
+
+                {previewFile.type === 'word' && previewFile.url && !previewLoading && (
+                  <div className="word-preview-container">
+                    <p className="word-preview-info">
+                      📄 Fichier Word : {previewFile.nom_fichier}
+                    </p>
+                    <a
+                      href={previewFile.url}
+                      download={previewFile.nom_fichier}
+                      className="download-word-btn"
+                    >
+                      ⬇️ Télécharger le fichier
+                    </a>
+                    <p className="word-preview-note">
+                      L'aperçu détaillé du document Word n'est pas disponible ici, veuillez télécharger le fichier pour le consulter.
+                    </p>
+                  </div>
                 )}
               </div>
             </div>

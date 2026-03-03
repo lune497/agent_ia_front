@@ -10,11 +10,13 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState("");
   const [waitingForResponse, setWaitingForResponse] = useState(false);
-  const [optimisticUserMsg, setOptimisticUserMsg] = useState(null);
-  const [typewriterMsg, setTypewriterMsg] = useState(null);
-  const [typewriterContent, setTypewriterContent] = useState("");
   const [displayedMessages, setDisplayedMessages] = useState([]);
   const [lastResponseId, setLastResponseId] = useState(null);
+
+  // streaming helper – break the final answer into chunks and reveal progressively
+  const [streamingSegments, setStreamingSegments] = useState(null);
+  const [streamingMessageId, setStreamingMessageId] = useState(null);
+  const [streamingIndex, setStreamingIndex] = useState(0);
   const messagesEndRef = useRef(null);
   const token = localStorage.getItem('token');
   const navigate = useNavigate();
@@ -24,6 +26,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const displayName = storedUserName;
   const initials = displayName ? displayName.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase() : 'U';
   const projectName = localStorage.getItem('projectName') || '';
+  const projectId = localStorage.getItem('projectId') || '';
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
@@ -50,8 +53,8 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const predefinedPrompts = [
     {
       id: 1,
-      label: "VÉRIFICATION DES QUESTIONS",
-      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie VÉRIFICATION DES QUESTIONS"
+      label: "VÉRIFICATION DE LA NUMEROTATION",
+      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie VÉRIFICATION DE LA NUMEROTATION"
     },
     {
       id: 2,
@@ -81,16 +84,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     // Ajoutez d'autres prompts ici si nécessaire
   ];
 
-  // Scroll automatique
-  useEffect(() => {
-    if (
-      messagesEndRef.current &&
-      !waitingForResponse &&
-      !typewriterMsg
-    ) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages, waitingForResponse, optimisticUserMsg, typewriterContent]);
 
   // Scroll automatique en bas quand on change de conversation ou que les messages sont mis à jour
   useEffect(() => {
@@ -110,7 +103,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     return () => {
       chatMessagesDiv.removeEventListener('scroll', handleScroll);
     };
-  }, [displayedMessages, waitingForResponse, typewriterMsg, typewriterContent]);
+  }, [displayedMessages, waitingForResponse]);
 
   useEffect(() => {
     setDisplayedMessages(messages);
@@ -147,50 +140,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     return cleaned;
   };
 
-  // Effet typewriter
-  useEffect(() => {
-    let intervalId;
-
-    const handleVisibilityChange = () => {
-      if (document.hidden && typewriterMsg) {
-        setTypewriterContent(typewriterMsg);
-        setTypewriterMsg(null);
-        setDisplayedMessages(prev => [
-          ...prev,
-          { id: Date.now(), content: typewriterMsg, role: "assistant" },
-        ]);
-        setWaitingForResponse(false);
-        setOptimisticUserMsg(null);
-      }
-    };
-
-    if (typewriterMsg && typewriterContent.length < typewriterMsg.length) {
-      intervalId = setInterval(() => {
-        setTypewriterContent(prev => typewriterMsg.slice(0, prev.length + 1));
-      }, 7);
-    }
-
-    if (typewriterMsg && typewriterContent.length === typewriterMsg.length) {
-      setTimeout(() => {
-        setDisplayedMessages(prev => [
-          ...prev,
-          { id: Date.now(), content: typewriterMsg, role: "assistant" },
-        ]);
-        setTypewriterMsg(null);
-        setTypewriterContent("");
-        setWaitingForResponse(false);
-        setOptimisticUserMsg(null);
-        refreshMessages(false);
-      }, 500);
-    }
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [typewriterMsg, typewriterContent, refreshMessages]);
 
 
   // Envoi message utilisateur
@@ -199,9 +148,11 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   if (!messageText || !conversationId) return;
 
   const originalPrompt = messageText; // Keep a copy to restore on error
+  // immediately show user message in history (even before server
+  // confirms) so the question never disappears
+  setDisplayedMessages(prev => [...prev, { id: Date.now(), prompt: messageText }]);
   setSending(true);
   setLocalError("");
-  setOptimisticUserMsg({ prompt: originalPrompt });
   setWaitingForResponse(true);
   if (!textToSend) {
     setPrompt(""); // Clear input for better UX (only if not from PromptSelector)
@@ -249,7 +200,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
        await pollForResponse(data.response_id, messageText); // Start polling for response
     } else {
       setLocalError("Erreur lors de l'ajout du message");
-      setOptimisticUserMsg(null);
       setWaitingForResponse(false);
       if (!textToSend) {
         setPrompt(originalPrompt); // Restore user input on failure
@@ -262,7 +212,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     } else {
       setLocalError("Erreur d'envoi : " + err.message);
     }
-    setOptimisticUserMsg(null);
     setWaitingForResponse(false);
     setPrompt(originalPrompt); // Restore user input on error
   })
@@ -286,9 +235,10 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       finalPrompt = predefinedPromptText.replace('Intensif avant.docx', selectedFile.nom_fichier);
     }
 
+    // show the chosen prompt as a message as soon as user clicks
+    setDisplayedMessages(prev => [...prev, { id: Date.now(), prompt: finalPrompt }]);
     setSending(true);
     setLocalError("");
-    setOptimisticUserMsg({ prompt: finalPrompt });
     setWaitingForResponse(true);
 
     setTimeout(() => {
@@ -331,7 +281,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           await pollForResponse(data.response_id, finalPrompt);
         } else {
           setLocalError("Erreur lors de l'ajout du message");
-          setOptimisticUserMsg(null);
           setWaitingForResponse(false);
         }
       })
@@ -341,7 +290,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         } else {
           setLocalError("Erreur d'envoi : " + err.message);
         }
-        setOptimisticUserMsg(null);
         setWaitingForResponse(false);
       })
       .finally(() => {
@@ -374,13 +322,15 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       const data = await res.json();
       console.log("mmmmm first",data)
       if (data.success && data.message) {
-        setOptimisticUserMsg(null);
-        setWaitingForResponse(false);
-        console.log("mmmmm",data.message)
-        if (!typewriterMsg) {
-          setTypewriterMsg(data.message);
-          setTypewriterContent("");
-        }
+        console.log("mmmmm",data.message);
+
+        // prepare streaming: split by lines and add empty message placeholder
+        const chunks = String(data.message).split(/\r?\n/);
+        const msgId = Date.now();
+        setStreamingSegments(chunks);
+        setStreamingMessageId(msgId);
+        setStreamingIndex(0);
+        setDisplayedMessages(prev => [...prev, { id: msgId, content: "" }]);
 
         clearInterval(window.__chat_polling_interval); // Clear polling interval
         window.__chat_polling_interval = null;
@@ -392,16 +342,42 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         setLocalError("Erreur polling : " + err.message);
       }
       setWaitingForResponse(false);
-      setOptimisticUserMsg(null);
       clearInterval(window.__chat_polling_interval); // Clear polling interval
       window.__chat_polling_interval = null;
     }
 
-    setDisplayedMessages([...displayedMessages,{id:new Date().getTime(),prompt}])
-    
+
   // }, 120000); // Polling every 2 minutes
 };
 
+
+  // effect: gradually append segments to the streaming message
+  useEffect(() => {
+    if (streamingMessageId !== null && streamingSegments) {
+      if (streamingIndex < streamingSegments.length) {
+        const timeout = setTimeout(() => {
+          setDisplayedMessages(prev => prev.map(m => {
+            if (m.id === streamingMessageId) {
+              const sep = m.content ? '\n' : '';
+              // when the first segment appears, hide the global loader/spinner
+              if (!m.content) {
+                setWaitingForResponse(false);
+              }
+              return { ...m, content: m.content + sep + streamingSegments[streamingIndex] };
+            }
+            return m;
+          }));
+          setStreamingIndex(i => i + 1);
+        }, 250);
+        return () => clearTimeout(timeout);
+      } else {
+        // done streaming
+        setStreamingMessageId(null);
+        setStreamingSegments(null);
+        setWaitingForResponse(false);
+      }
+    }
+  }, [streamingIndex, streamingMessageId, streamingSegments]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -413,55 +389,15 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       clearInterval(window.__chat_polling_interval);
       window.__chat_polling_interval = null;
     }
-    if (typewriterMsg && typewriterContent) {
-      setDisplayedMessages(prev => {
-        const alreadyExists = prev.some(
-          msg => msg.content === typewriterContent
-        );
-        if (!alreadyExists) {
-          return [
-            ...prev,
-            { id: Date.now(), content: typewriterContent, role: "assistant" }
-          ];
-        }
-        return prev;
-      });
-    }
-    setTypewriterMsg(null);
-    setTypewriterContent("");
+    // clear any streaming in progress
+    setStreamingMessageId(null);
+    setStreamingSegments(null);
+    setStreamingIndex(0);
     setWaitingForResponse(false);
-    setOptimisticUserMsg(null);
     setLocalError("Génération arrêtée.");
   };
 
-  // Scroll pendant génération
-  useEffect(() => {
-    if (typewriterMsg && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [typewriterContent, typewriterMsg]);
 
-  // When streaming HTML into the iframe, also scroll the iframe's inner document to bottom
-  useEffect(() => {
-    if (!typewriterMsg) return;
-    if (!isHTMLContent(typewriterMsg)) return;
-
-    // find the last iframe preview (the one for the streaming message)
-    const iframes = document.querySelectorAll('.html-preview-iframe');
-    if (!iframes || iframes.length === 0) return;
-    const iframe = iframes[iframes.length - 1];
-    if (!iframe) return;
-
-    try {
-      const doc = iframe.contentDocument || iframe.contentWindow.document;
-      const scrollHeight = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
-      // scroll the iframe's window to bottom smoothly
-      iframe.contentWindow.scrollTo({ top: scrollHeight, behavior: 'smooth' });
-    } catch (err) {
-      // accessing iframe might fail if sandbox/origin changes; ignore silently
-      // console.warn('Could not scroll iframe:', err);
-    }
-  }, [typewriterContent, typewriterMsg]);
 
   // Also ensure that when a full HTML message is appended we scroll its iframe to bottom
   useEffect(() => {
@@ -662,10 +598,14 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const handleFileChange = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    // accept only doc or docx
-    const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-    if (!allowed.includes(file.type) && !/\.docx?$/.test(file.name)) {
-      setUploadError('Format non supporté — choisissez .doc ou .docx');
+    // accept only doc, docx, or pdf
+    const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/pdf'];
+    const hasValidType = allowed.includes(file.type);
+    const hasValidExtension = /\.(?:docx?|pdf)$/i.test(file.name);
+    // Accept if either type is valid OR extension is valid (allows files without extension if type is detected)
+    // Also accept if type is empty and extension is valid (some systems don't set MIME type for PDF)
+    if (!hasValidType && !hasValidExtension) {
+      setUploadError('Format non supporté — choisissez .doc, .docx ou .pdf');
       return;
     }
     setUploadError("");
@@ -679,7 +619,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     setUploadError("");
     setUploadedInfo(null);
 
-    const url = 'http://localhost/ia/public/api/agent_ft/charger_fichier_openai';
+    const url = 'http://localhost/ia/public/api/charger_fichier_openai';
     const form = new FormData();
     form.append('fichier', file);
 
@@ -783,7 +723,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
                 setFilesLoading(true);
                 setFilesError("");
                 try {
-                  const query = '{vector_stores(projet_id:8){id,nom_fichier}}';
+                  const query = `{vector_stores(projet_id:${projectId}){id,nom_fichier}}`;
                   const url = `http://localhost/ia/public/graphql?query=${encodeURIComponent(query)}`;
                   const res = await fetch(url, {
                     headers: {
@@ -808,7 +748,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             <span>Fichiers</span>
           </button>
 
-          {/* Upload Word file */}
+          {/* Upload Word or PDF file */}
           <button
             className="upload-btn"
             onClick={() => {
@@ -817,11 +757,11 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
               if (fileInputRef.current) fileInputRef.current.value = null;
               fileInputRef.current?.click();
             }}
-            title="Uploader un fichier Word"
+            title="Uploader un fichier Word ou PDF"
             disabled={uploading}
           >
             📁
-            <span>Uploader Word</span>
+            <span>Uploader Word/PDF</span>
           </button>
 
           {/* Download Word / Select mode */}
@@ -859,7 +799,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           <input
             ref={fileInputRef}
             type="file"
-            accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept=".doc,.docx,.pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"
             style={{ display: 'none' }}
             onChange={handleFileChange}
           />
@@ -914,7 +854,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       </div>
       <div className="chat-title-bar">
         <h1 className="chat-title-gradient">AGENT IA PROJET {projectName && `- ${projectName}`}</h1>
-        <img src="/agent-restitution.gif" alt="Agent de restitution" className="chat-title-gif" />
+        {/* <img src="/agent-restitution.gif" alt="Agent de restitution" className="chat-title-gif" /> */}
       </div>
       <div className="chat-header">
         {conversationId ? `Conversation #${conversationIdInt}` : 'Aucun chat sélectionné'}
@@ -1011,31 +951,10 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             )}
           </div>
         ))}
-        {optimisticUserMsg && (
-          <div className="message">
-            <div className="user-message styled-user-message">
-              <strong style={{ fontSize: '1.1em', color: '#4f46e5' }}>Vous :</strong> 
-              <span style={{ fontSize: '1.05em', fontWeight: '600', color: '#1f2937', marginLeft: '8px', lineHeight: '1.6' }}>
-                {optimisticUserMsg.prompt}
-              </span>
-            </div>
-          </div>
-        )}
-        {waitingForResponse && !typewriterMsg && (
+        {waitingForResponse && (
           <div className="ai-message ai-thinking styled-ai-thinking">
+            <span className="spinner" />
             <span className="thinking-dots">L'IA réfléchit<span className="dot">.</span><span className="dot">.</span><span className="dot">.</span></span>
-          </div>
-        )}
-        {typewriterMsg && (
-          <div className="ai-message styled-ai-message">
-            <strong>Agent IA :</strong>
-            <div className="formatted-content">
-              {isHTMLContent(typewriterContent) ? (
-                <div dangerouslySetInnerHTML={{ __html: renderSafeHTML(typewriterContent) }} />
-              ) : (
-                <ReactMarkdown>{typewriterContent}</ReactMarkdown>
-              )}
-            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -1060,7 +979,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       {(uploadOpen || uploading || uploadedInfo || uploadError) && (
         <div className="upload-modal">
           <div className="upload-card">
-            <h3>Upload de fichier Word</h3>
+            <h3>Upload de fichier Word ou PDF</h3>
             {uploading && (
               <>
                 <div className="upload-progress">
@@ -1087,7 +1006,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       )}
 
       {/* Section prompts prédéfinis */}
-      {conversationId && displayedMessages.length === 0 && projectName === 'AGENT-FT' && (
+      {/* {conversationId && displayedMessages.length === 0 && projectName === 'AGENT-FT' && (
         
         <div className="predefined-prompts-section">
           <h3 className="predefined-prompts-title">Prompts recommandés</h3>
@@ -1105,7 +1024,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             ))}
           </div>
         </div>
-      )}
+      )} */}
 
       {conversationId && (
         <div className="chat-input" style={{ position: 'relative' }}>
@@ -1121,10 +1040,10 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             }}
             placeholder="Votre message..."
             rows={3}
-            style={{ paddingRight: (waitingForResponse || typewriterMsg) ? '40px' : undefined }}
+            style={{ paddingRight: waitingForResponse ? '40px' : undefined }}
           />
           <button onClick={sendMessage} disabled={sending || !prompt}>Envoyer</button>
-          {(waitingForResponse || typewriterMsg) && (
+          {waitingForResponse && (
             <button
               className="stop-btn stop-btn-input"
               onClick={handleStopGeneration}

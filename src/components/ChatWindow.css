@@ -3,7 +3,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 1.2rem;
+  gap: 1.     rem;
   margin-bottom: -2.9rem;
   margin-top: -2.9rem;
 }
@@ -104,13 +104,66 @@
   margin-bottom: 2px !important;
 }
 
+/* fade-in animation for incoming messages */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* tiny spinner shown while waiting for response */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid #d1d5db;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
 .message {
   display: flex;
   flex-direction: column;
   align-items: center;
   margin-top: 18px;
   margin-bottom: 18px;
+  animation: fadeInUp 0.4s ease-out;
 }
+
+/* also animate individual bubbles in case messages are appended */
+.user-message,
+.ai-message,
+.styled-ai-message,
+.styled-user-message {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+/* when a message appears, fade in its internal lines/paragraphs one after another */
+.formatted-content > * {
+  opacity: 0;
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+/* stagger delays up to a reasonable number of children */
+.formatted-content > *:nth-child(1)  { animation-delay: 0.05s; }
+.formatted-content > *:nth-child(2)  { animation-delay: 0.10s; }
+.formatted-content > *:nth-child(3)  { animation-delay: 0.15s; }
+.formatted-content > *:nth-child(4)  { animation-delay: 0.20s; }
+.formatted-content > *:nth-child(5)  { animation-delay: 0.25s; }
+.formatted-content > *:nth-child(6)  { animation-delay: 0.30s; }
+.formatted-content > *:nth-child(7)  { animation-delay: 0.35s; }
+.formatted-content > *:nth-child(8)  { animation-delay: 0.40s; }
+.formatted-content > *:nth-child(9)  { animation-delay: 0.45s; }
+.formatted-content > *:nth-child(10) { animation-delay: 0.50s; }
+.formatted-content > *:nth-child(11) { animation-delay: 0.55s; }
+.formatted-content > *:nth-child(12) { animation-delay: 0.60s; }
+.formatted-content > *:nth-child(13) { animation-delay: 0.65s; }
+.formatted-content > *:nth-child(14) { animation-delay: 0.70s; }
+.formatted-content > *:nth-child(15) { animation-delay: 0.75s; }
 
 .user-message {
   align-self: center;
@@ -181,6 +234,8 @@
   padding: 0.7rem;
   resize: none;
   font-size: 1.08rem;
+
+  
   font-family: 'Inter', sans-serif;
   background: #f5f3ff;
   color: #312e81;

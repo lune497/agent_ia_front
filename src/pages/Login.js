@@ -12,6 +12,27 @@ const Login = () => {
   const [loadingProjets, setLoadingProjets] = useState(true);
   const navigate = useNavigate();
 
+  // Initialiser LiveChat pour cette page
+  useEffect(() => {
+    window.__lc = window.__lc || {};
+    window.__lc.license = 19385743;
+    window.__lc.integration_name = "manual_channels";
+    window.__lc.product_name = "livechat";
+    
+    const script = document.createElement('script');
+    script.async = true;
+    script.type = "text/javascript";
+    script.src = "https://cdn.livechatinc.com/tracking.js";
+    document.head.appendChild(script);
+    
+    return () => {
+      // Nettoyer le script à la désinscription du composant
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    };
+  }, []);
+
   // Récupérer les projets via GraphQL au chargement du composant
   useEffect(() => {
     const fetchProjets = async () => {

@@ -10,6 +10,7 @@ const Sidebar = ({ conversations, onConversationSelect, onNewConversation, selec
   const [promptSelectorOpen, setPromptSelectorOpen] = useState(false);
   const token = localStorage.getItem('token');
   const projectName = localStorage.getItem('projectName') || '';
+  const projectId = localStorage.getItem('projectId') || '';
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -63,6 +64,7 @@ const Sidebar = ({ conversations, onConversationSelect, onNewConversation, selec
         hasActiveConversation={!!selectedConversation}
         token={token}
         projectName={projectName}
+        projectId={projectId}
       />
     </div>
   );
