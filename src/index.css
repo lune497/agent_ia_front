@@ -5,6 +5,45 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --app-bg-start: #e0e7ff;
+  --app-bg-end: #f5f3ff;
+  --surface-start: #f5f3ff;
+  --surface-end: #e0e7ff;
+  --sidebar-start: #010106;
+  --sidebar-end: #7c3aed;
+  --accent-start: #6366f1;
+  --accent-end: #06b6d4;
+  --accent-strong-start: #7c3aed;
+  --accent-strong-end: #6366f1;
+  --title-color: #4f46e5;
+  --text-strong: #312e81;
+  --login-bg: #1e1e2f;
+  --login-form-start: #22233a;
+  --login-form-end: #191a2d;
+  --login-active-start: #1073ff;
+  --login-active-end: #35a7ff;
+  --login-active-border: #8fcbff;
+}
+
+body[data-llm-theme='claude'] {
+  --app-bg-start: #fff4eb;
+  --app-bg-end: #ffe7d2;
+  --surface-start: #fff8f2;
+  --surface-end: #ffe9d8;
+  --sidebar-start: #2d1208;
+  --sidebar-end: #c66a24;
+  --accent-start: #c66a24;
+  --accent-end: #f59e0b;
+  --accent-strong-start: #a64b1a;
+  --accent-strong-end: #d97706;
+  --title-color: #9a3412;
+  --text-strong: #7c2d12;
+  --login-bg: #23150f;
+  --login-form-start: #322016;
+  --login-form-end: #27170f;
+  --login-active-start: #b45309;
+  --login-active-end: #f59e0b;
+  --login-active-border: #fcd34d;
 }
 
 code {

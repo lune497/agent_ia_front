@@ -56,7 +56,7 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
       loadFiles();
     }
   }, [isOpen]);
-
+  const getLlmName = () => (localStorage.getItem('llm_nom') || 'openai').toLowerCase();
   const loadFiles = async () => {
     setFilesLoading(true);
     setFilesError("");
@@ -75,7 +75,7 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
       setFilesList(Array.isArray(list) ? list : []);
     } catch (err) {
       setFilesError(String(err.message || err));
-    } finally {
+    } finally { 
       setFilesLoading(false);
     }
   };
@@ -84,11 +84,18 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
     const file = e.target.files?.[0];
     if (file) {
       // Validate file type
-      const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/pdf'];
+      const allowed = [
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/pdf',
+        'text/csv',
+        'application/csv',
+        'application/vnd.ms-excel',
+      ];
       const hasValidType = allowed.includes(file.type);
-      const hasValidExtension = /\.(?:docx?|pdf)$/i.test(file.name);
+      const hasValidExtension = /\.(?:docx?|pdf|csv)$/i.test(file.name);
       if (!hasValidType && !hasValidExtension) {
-        setUploadError('Format non supporté — choisissez .doc, .docx ou .pdf');
+        setUploadError('Format non supporté — choisissez .doc, .docx, .pdf ou .csv');
         return;
       }
       setUploadError("");
@@ -105,7 +112,8 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
     const url = 'http://localhost/ia/public/api/agent_ft/charger_fichier_openai';
     const form = new FormData();
     form.append('fichier', file);
-
+    form.append('llm_nom', getLlmName());
+    form.append('projet_id', projectId);
     const xhr = new XMLHttpRequest();
     xhrRef.current = xhr;
     xhr.open('POST', url, true);
@@ -322,7 +330,7 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
             type="file"
             ref={fileInputRef}
             onChange={handleFileSelect}
-            accept=".docx,.doc,.pdf,.txt"
+            accept=".docx,.doc,.pdf,.csv,.txt"
             style={{ display: 'none' }}
           />
           {selectedFile?.name && !selectedFile?.id && (
@@ -331,7 +339,7 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
         </div>
 
         {/* Prompts Grid - Only show if projectName is 'AGENT-FT' */}
-        {projectName === 'AGENT-FT' ? (
+        {projectName === 'AGENT-FT' || projectName === 'AGENT -FT' ? (
           <>
             <div className="prompts-grid">
               {predefinedPrompts.map((prompt) => (
@@ -368,7 +376,7 @@ const PromptSelector = ({ isOpen, onClose, onPromptSelect, hasActiveConversation
         {(uploading || uploadedInfo || uploadError) && (
           <div className="upload-modal-overlay">
             <div className="upload-card">
-              <h3>Upload de fichier Word</h3>
+              <h3>Upload de fichier</h3>
               {uploading && (
                 <>
                   <div className="upload-progress">

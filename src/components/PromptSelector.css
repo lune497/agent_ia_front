@@ -13,7 +13,7 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+  background: linear-gradient(135deg, #ffffff 0%, var(--surface-start) 100%);
   border-radius: 20px;
   box-shadow: 0 20px 60px rgba(99, 102, 241, 0.25), 0 0 60px rgba(99, 102, 241, 0.1);
   max-width: 900px;
@@ -59,7 +59,7 @@
   font-size: 1.8rem;
   font-family: 'Inter', sans-serif;
   font-weight: 800;
-  background: linear-gradient(90deg, #6366f1 0%, #06b6d4 100%);
+  background: linear-gradient(90deg, var(--accent-start) 0%, var(--accent-end) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -69,7 +69,7 @@
 .close-prompt-btn {
   background: linear-gradient(90deg, #f1f5fe 0%, #ede9fe 100%);
   border: 1.5px solid #c7d2fe;
-  color: #4f46e5;
+  color: var(--title-color);
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -96,7 +96,7 @@
   gap: 1.2rem;
   margin-bottom: 0;
   padding: 1.5rem;
-  background: linear-gradient(90deg, #f0f4ff 0%, #f5f3ff 100%);
+  background: linear-gradient(90deg, #f0f4ff 0%, var(--surface-start) 100%);
   border-radius: 14px;
   border: 2px solid #c7d2fe;
   animation: slideInUp 0.5s ease-out 0.1s both;
@@ -204,7 +204,7 @@
   gap: 1rem;
   margin-bottom: 2.5rem;
   padding: 1.5rem;
-  background: linear-gradient(90deg, #f0f4ff 0%, #f5f3ff 100%);
+  background: linear-gradient(90deg, #f0f4ff 0%, var(--surface-start) 100%);
   border-radius: 14px;
   border: 2px dashed #c7d2fe;
   animation: slideInUp 0.5s ease-out 0.15s both;
@@ -223,7 +223,7 @@
 
 .select-file-btn {
   padding: 0.8rem 1.4rem;
-  background: linear-gradient(90deg, #6366f1 0%, #7c3aed 100%);
+  background: linear-gradient(90deg, var(--accent-start) 0%, var(--accent-strong-start) 100%);
   color: #fff;
   border: none;
   border-radius: 10px;
@@ -236,14 +236,14 @@
 }
 
 .select-file-btn:hover {
-  background: linear-gradient(90deg, #7c3aed 0%, #8b5cf6 100%);
+  background: linear-gradient(90deg, var(--accent-strong-start) 0%, #8b5cf6 100%);
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(99, 102, 241, 0.3);
 }
 
 .or-divider {
   font-weight: 700;
-  color: #6366f1;
+  color: var(--accent-start);
   font-size: 1.1rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -305,7 +305,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, #6366f1 0%, #06b6d4 100%);
+  background: linear-gradient(90deg, var(--accent-start) 0%, var(--accent-end) 100%);
   opacity: 0;
   transition: opacity 0.3s ease;
   z-index: -1;
@@ -317,7 +317,7 @@
 }
 
 .prompt-card:hover {
-  border-color: #6366f1;
+  border-color: var(--accent-start);
   transform: translateY(-6px) scale(1.02);
   box-shadow: 0 12px 24px rgba(99, 102, 241, 0.2);
 }
@@ -335,7 +335,7 @@
 .prompt-label {
   font-weight: 700;
   font-size: 1.1rem;
-  color: #4f46e5;
+  color: var(--title-color);
   font-family: 'Inter', sans-serif;
   text-align: left;
   flex: 1;
@@ -344,14 +344,14 @@
 
 .prompt-arrow {
   font-size: 1.6rem;
-  color: #6366f1;
+  color: var(--accent-start);
   transition: all 0.3s ease;
   margin-left: 0.8rem;
   flex-shrink: 0;
 }
 
 .prompt-card:hover .prompt-arrow {
-  color: #06b6d4;
+  color: var(--accent-end);
   transform: translateX(6px);
 }
 
@@ -465,7 +465,7 @@
 }
 
 .upload-card {
-  background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+  background: linear-gradient(135deg, #ffffff 0%, var(--surface-start) 100%);
   border-radius: 14px;
   padding: 2rem;
   box-shadow: 0 20px 60px rgba(99, 102, 241, 0.25);
@@ -478,7 +478,7 @@
   margin: 0 0 1.5rem 0;
   font-size: 1.4rem;
   font-weight: 700;
-  color: #4f46e5;
+  color: var(--title-color);
   font-family: 'Inter', sans-serif;
 }
 
@@ -493,14 +493,14 @@
 
 .progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, #6366f1, #06b6d4);
+  background: linear-gradient(90deg, var(--accent-start), var(--accent-end));
   transition: width 0.3s ease;
 }
 
 .upload-progress-label {
   text-align: center;
   font-weight: 700;
-  color: #6366f1;
+  color: var(--accent-start);
   font-size: 0.95rem;
   margin-bottom: 1.2rem;
 }
@@ -557,7 +557,7 @@
 
 .close-upload-btn {
   background: linear-gradient(90deg, #c7d2fe 0%, #a5b4fc 100%);
-  color: #4f46e5;
+  color: var(--title-color);
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
 }
 
@@ -608,7 +608,7 @@
 
 /* Preview Modal Content */
 .preview-modal-content {
-  background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+  background: linear-gradient(135deg, #ffffff 0%, var(--surface-start) 100%);
   border-radius: 20px;
   box-shadow: 0 25px 70px rgba(99, 102, 241, 0.3), 0 0 80px rgba(6, 182, 212, 0.15);
   width: 90%;
@@ -634,7 +634,7 @@
   margin: 0;
   font-size: 1.4rem;
   font-weight: 700;
-  color: #4f46e5;
+  color: var(--title-color);
   font-family: 'Inter', sans-serif;
   word-break: break-word;
   flex: 1;
@@ -643,7 +643,7 @@
 .preview-close-btn {
   background: linear-gradient(90deg, #f1f5fe 0%, #ede9fe 100%);
   border: 1.5px solid #c7d2fe;
-  color: #4f46e5;
+  color: var(--title-color);
   width: 44px;
   height: 44px;
   border-radius: 50%;
@@ -673,12 +673,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+  background: linear-gradient(135deg, #ffffff 0%, var(--surface-start) 100%);
 }
 
 .preview-loader {
   font-size: 1.2rem;
-  color: #6366f1;
+  color: var(--accent-start);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -726,7 +726,7 @@
   margin: 0;
   font-size: 1.2rem;
   font-weight: 700;
-  color: #4f46e5;
+  color: var(--title-color);
   font-family: 'Inter', sans-serif;
 }
 
@@ -736,7 +736,7 @@
   justify-content: center;
   gap: 0.6rem;
   padding: 0.9rem 1.8rem;
-  background: linear-gradient(90deg, #6366f1 0%, #7c3aed 100%);
+  background: linear-gradient(90deg, var(--accent-start) 0%, var(--accent-strong-start) 100%);
   color: #fff;
   text-decoration: none;
   border-radius: 10px;
@@ -751,7 +751,7 @@
 .download-word-btn:hover {
   transform: translateY(-3px);
   box-shadow: 0 6px 20px rgba(99, 102, 241, 0.3);
-  background: linear-gradient(90deg, #7c3aed 0%, #8b5cf6 100%);
+  background: linear-gradient(90deg, var(--accent-strong-start) 0%, #8b5cf6 100%);
 }
 
 .download-word-btn:active {

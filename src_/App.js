@@ -10,27 +10,17 @@ function App() {
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [selectedConversationId, setSelectedConversationId] = useState(null);
-  const [newConversationId, setNewConversationId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [promptToSend, setPromptToSend] = useState("");
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
   const userId = localStorage.getItem('userId');
   const projectName = localStorage.getItem('projectName');
   const projectId = localStorage.getItem('projectId');
-  const llmNom = localStorage.getItem('llm_nom') || 'openai';
-  const llmId = llmNom === 'claude' ? 2 : 1;
-  const conversationFilters = [];
-  if (userId) conversationFilters.push(`user_id:${userId}`);
-  if (projectId) conversationFilters.push(`projet_id:${projectId}`);
-  conversationFilters.push(`llm_id:${llmId}`);
-  const conversationFilterQuery = `(${conversationFilters.join(',')})`;
-
-  useEffect(() => {
-    document.body.setAttribute('data-llm-theme', llmNom);
-  }, [llmNom]);
+  // build a GraphQL filter for the current user (if available)
+  const userFilter = userId ? `(user_id:${userId}` : '';
+  const projectFilter = projectId ? `,projet_id:${projectId})` : '';
 
   useEffect(() => {
     if (!token) {
@@ -42,7 +32,7 @@ function App() {
 
   const fetchConversations = async () => {
     try {
-      const res = await fetch(`http://localhost/ia/public/graphql?query={conversation_ineds${conversationFilterQuery}{id,conversation_id}}`, {
+      const res = await fetch(`http://localhost.com/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -58,12 +48,12 @@ function App() {
   };
 
   const handleConversationSelect = async (numericId, stringId, showLoader = true) => {
-     setSelectedConversation(stringId);
-     setSelectedConversationId(numericId);
-     if (showLoader) setLoading(true);
-     if (showLoader) setMessages([]);
+    setSelectedConversation(stringId);
+    setSelectedConversationId(numericId);
+    if (showLoader) setLoading(true);
+    setMessages([]);
     try {
-      const res = await fetch(`http://localhost/ia/public/graphql?query={message_ineds(conversation_ined_id:${numericId}){id,prompt,message_ined_id,content,role}}`, {
+      const res = await fetch(`http://localhost.com/ia/public/graphql?query={message_ineds(conversation_ined_id:${numericId}){id,prompt,message_ined_id,content,role}}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -83,25 +73,19 @@ function App() {
     setSelectedConversation(null);
     setSelectedConversationId(null);
     setLoading(true);
-    const normalizedLlmName = (llmNom || 'openai').toLowerCase();
-    const createConversationEndpoint =
-      normalizedLlmName === 'claude' ? 'http://localhost/ia/public/api/restitution/createConversationClaude' : 'http://localhost/ia/public/api/restitution/createConversation_ined';
     try {
-      const res = await fetch(createConversationEndpoint, {
+      const res = await fetch('http://localhost.com/ia/public/api/restitution/createConversation_ined', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          projet_name: projectName,
-          llm_nom: llmNom
-        })
+        body: JSON.stringify({projet_name: projectName})
       });
       
       const data = await res.json();
       if (data.success) {
-        const convRes = await fetch(`http://localhost/ia/public/graphql?query={conversation_ineds${conversationFilterQuery}{id,conversation_id}}`, {
+        const convRes = await fetch(`http://localhost.com/ia/public/graphql?query={conversation_ineds${userFilter}${projectFilter}{id,conversation_id}}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -110,14 +94,11 @@ function App() {
         });
         const convData = await convRes.json();
         const newConversations = convData.data.conversation_ineds;
-        setSelectedConversation(data.conversation_id);
-        // setNewConversationId(data.conversation_id)
         setConversations(newConversations);
         const newConv = newConversations.find(c => c.conversation_id === data.conversation_id);
         if (newConv) {
-          
+          setSelectedConversation(newConv.conversation_id);
           setSelectedConversationId(newConv.id);
-         
         }
       } else {
         setError("Impossible de créer une nouvelle conversation");
@@ -126,11 +107,6 @@ function App() {
       setError("Erreur lors de la création de la conversation : " + err.message);
     }
     setLoading(false);
-  };
-
-  // Handle prompt submission from PromptSelector
-  const handlePromptSubmit = (promptText) => {
-    setPromptToSend(promptText);
   };
 
   return (
@@ -145,7 +121,6 @@ function App() {
               onConversationSelect={(id, conv_id) => handleConversationSelect(id, conv_id)}
               onNewConversation={handleNewConversation}
               selectedConversation={selectedConversation}
-              onPromptSubmit={handlePromptSubmit}
             />
             {!loading && <ChatWindow
               conversationId={selectedConversation}
@@ -153,9 +128,7 @@ function App() {
               messages={messages}
               loading={loading}
               error={error}
-              refreshMessages={(showLoader = false) => handleConversationSelect(selectedConversationId, selectedConversation, showLoader)}
-              promptToSend={promptToSend}
-              onPromptSent={() => setPromptToSend("")}
+              refreshMessages={() => handleConversationSelect(selectedConversationId, selectedConversation)}
             />}
           </div>
         }

@@ -1,71 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FaHeadset, FaToggleOn, FaToggleOff, FaRobot } from 'react-icons/fa';
-import { SiAnthropic } from 'react-icons/si';
+import { FaHeadset } from 'react-icons/fa'; // Import headset icon
 import './Login.css';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [selectedLlm, setSelectedLlm] = useState(() => {
-    return localStorage.getItem('llm_nom') === 'claude' ? 'claude' : 'openai';
-  });
   const [projetId, setProjetId] = useState('');
   const [projets, setProjets] = useState([]);
   const [error, setError] = useState('');
   const [loadingProjets, setLoadingProjets] = useState(true);
   const navigate = useNavigate();
-  const selectedLlmId = selectedLlm === 'claude' ? 2 : 1;
 
-  useEffect(() => {
-    document.body.setAttribute('data-llm-theme', selectedLlm);
-    localStorage.setItem('llm_nom', selectedLlm);
-  }, [selectedLlm]);
-
-  // Initialiser LiveChat pour cette page
-  useEffect(() => {
-    window.__lc = window.__lc || {};
-    window.__lc.license = 19385743;
-    window.__lc.integration_name = "manual_channels";
-    window.__lc.product_name = "livechat";
-    
-    const script = document.createElement('script');
-    script.async = true;
-    script.type = "text/javascript";
-    script.src = "https://cdn.livechatinc.com/tracking.js";
-    document.head.appendChild(script);
-    
-    return () => {
-      // Nettoyer le script à la désinscription du composant
-      if (script.parentNode) {
-        script.parentNode.removeChild(script);
-      }
-    };
-  }, []);
-
-  // Récupérer les projets via GraphQL selon le LLM sélectionné
+  // Récupérer les projets via GraphQL au chargement du composant
   useEffect(() => {
     const fetchProjets = async () => {
-      setLoadingProjets(true);
-      setProjetId('');
       try {
-        const query = encodeURIComponent(`{projets(llm_id:${selectedLlmId}){id,nom_projet}}`);
-        const res = await fetch(`http://localhost/ia/public/graphql?query=${query}`);
+        const query = encodeURIComponent('{projets{id,nom_projet}}');
+        const res = await fetch(`http://localhost.com/ia/public/graphql?query=${query}`);
         const data = await res.json();
         if (data.data && data.data.projets) {
           setProjets(data.data.projets);
-        } else {
-          setProjets([]);
+          // Garder projetId vide pour que "Sélectionner un projet" soit par défaut
+          setProjetId('');
         }
       } catch (err) {
         console.error('Erreur lors de la récupération des projets:', err);
         setError('Impossible de charger les projets');
       } finally {
         setLoadingProjets(false);
-      } 
+      }
     };
     fetchProjets();
-  }, [selectedLlmId]);
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -75,22 +42,16 @@ const Login = () => {
         setError('Veuillez sélectionner un projet');
         return;
       }
-      const res = await fetch('http://localhost/ia/public/api/login', {
+      const res = await fetch('http://localhost.com/ia/public/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          password,
-          projet_id: projetId,
-          llm_nom: selectedLlm
-        }),
+        body: JSON.stringify({ email, password, projet_id: projetId }),
       });
       const data = await res.json();
       if (data.token && data.user && data.user.id && data.user.name) {
         localStorage.setItem('token', data.token); // Save token to localStorage
         localStorage.setItem('userId', data.user.id);
         localStorage.setItem('userName', data.user.name);
-        localStorage.setItem('llm_nom', selectedLlm);
         if (data.projet_name) {
           localStorage.setItem('projectName', data.projet_name);
           localStorage.setItem('projectId', data.projet_id);
@@ -99,7 +60,6 @@ const Login = () => {
       } else if (data.token) {
         // fallback si l'API ne retourne pas user
         localStorage.setItem('token', data.token);
-        localStorage.setItem('llm_nom', selectedLlm);
         if (data.projet_name) {
           localStorage.setItem('projectName', data.projet_name);
           localStorage.setItem('projectId', data.projet_id);
@@ -121,31 +81,6 @@ const Login = () => {
         <h1>Assistant IA LVDC</h1>
       </div>
       <form onSubmit={handleLogin} className="login-form">
-        <div className="llm-selector">
-          <p className="llm-selector-title">Mode LLM</p>
-          <div className="llm-toggle-wrap">
-            <button
-              type="button"
-              className={`llm-option ${selectedLlm === 'openai' ? 'active' : ''}`}
-              onClick={() => setSelectedLlm('openai')}
-            >
-              <FaRobot />
-              <span>OpenAI</span>
-            </button>
-            <button
-              type="button"
-              className={`llm-option ${selectedLlm === 'claude' ? 'active' : ''}`}
-              onClick={() => setSelectedLlm('claude')}
-            >
-              <SiAnthropic />
-              <span>Claude</span>
-            </button>
-          </div>
-          <div className="llm-status">
-            {selectedLlm === 'openai' ? <FaToggleOn /> : <FaToggleOff />}
-            <span>{selectedLlm === 'openai' ? 'OpenAI activé' : 'Claude activé'}</span>
-          </div>
-        </div>
         <input
           type="email"
           placeholder="Email"

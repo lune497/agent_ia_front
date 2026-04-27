@@ -2,6 +2,6 @@
   display: flex;
   height: 100vh;
   font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background: linear-gradient(135deg, var(--app-bg-start) 0%, var(--app-bg-end) 100%);
+  background: linear-gradient(135deg, #e0e7ff 0%, #f5f3ff 100%);
   overflow: hidden;
 }

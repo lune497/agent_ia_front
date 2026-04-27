@@ -1,22 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { FaUserCircle, FaCheckSquare, FaDownload, FaTimes, FaFolderOpen } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
 import './ChatWindow.css';
 
-const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages, conversationIdInt, promptToSend, onPromptSent }) => {
+const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages, conversationIdInt }) => {
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState("");
   const [waitingForResponse, setWaitingForResponse] = useState(false);
+  const [optimisticUserMsg, setOptimisticUserMsg] = useState(null);
+  const [typewriterMsg, setTypewriterMsg] = useState(null);
+  const [typewriterContent, setTypewriterContent] = useState("");
   const [displayedMessages, setDisplayedMessages] = useState([]);
-  const [lastResponseId, setLastResponseId] = useState(null);
-
-  // streaming helper – break the final answer into chunks and reveal progressively
-  const [streamingSegments, setStreamingSegments] = useState(null);
-  const [streamingMessageId, setStreamingMessageId] = useState(null);
-  const [streamingIndex, setStreamingIndex] = useState(0);
   const displayedMessagesRef = useRef([]);
+  const [lastResponseId, setLastResponseId] = useState(null);
   const messagesEndRef = useRef(null);
   const token = localStorage.getItem('token');
   const navigate = useNavigate();
@@ -26,7 +25,6 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const displayName = storedUserName;
   const initials = displayName ? displayName.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase() : 'U';
   const projectName = localStorage.getItem('projectName') || '';
-  const projectId = localStorage.getItem('projectId') || '';
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
@@ -46,15 +44,13 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const [filesError, setFilesError] = useState("");
   // Side panel state
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
-  // Selected file for prompts
-  const [selectedFile, setSelectedFile] = useState(null);
 
   // Prompts prédéfinis
   const predefinedPrompts = [
     {
       id: 1,
-      label: "VÉRIFICATION DE LA NUMEROTATION",
-      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie VÉRIFICATION DE LA NUMEROTATION"
+      label: "VÉRIFICATION DES QUESTIONS",
+      prompt: "Voici mon questionnaire en état brute Intensif avant.docx merci de me traiter cette partie VÉRIFICATION DES QUESTIONS"
     },
     {
       id: 2,
@@ -84,6 +80,16 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     // Ajoutez d'autres prompts ici si nécessaire
   ];
 
+  // Scroll automatique
+  useEffect(() => {
+    if (
+      messagesEndRef.current &&
+      !waitingForResponse &&
+      !typewriterMsg
+    ) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, waitingForResponse, optimisticUserMsg, typewriterContent]);
 
   // Scroll automatique en bas quand on change de conversation ou que les messages sont mis à jour
   useEffect(() => {
@@ -103,7 +109,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     return () => {
       chatMessagesDiv.removeEventListener('scroll', handleScroll);
     };
-  }, [displayedMessages, waitingForResponse]);
+  }, [displayedMessages, waitingForResponse, typewriterMsg, typewriterContent]);
 
   useEffect(() => {
     setDisplayedMessages(messages);
@@ -113,265 +119,22 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     displayedMessagesRef.current = displayedMessages;
   }, [displayedMessages]);
 
-  // Handle prompt from PromptSelector
-  useEffect(() => {
-    if (promptToSend && promptToSend.trim()) {
-      setPrompt(promptToSend);
-      // Auto-send the prompt after a small delay to ensure UI has updated
-      setTimeout(() => {
-        sendMessage(promptToSend);
-        if (onPromptSent) {
-          onPromptSent();
-        }
-      }, 100);
-    }
-  }, [promptToSend]);
-
-
-
-  // Helper: detecte si la réponse contient du HTML (simple heuristique)
-  const isHTMLContent = (text) => {
-    if (!text) return false;
-    return /<\/?[a-z][\s\S]*>/i.test(text);
-  };
-
-  const sanitizeRichHtml = (htmlContent) =>
-    DOMPurify.sanitize(htmlContent, {
-      ALLOWED_TAGS: [
-        'span', 'div', 'p', 'br', 'strong', 'em', 'b', 'i', 'u',
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li',
-        'pre', 'code', 'hr', 'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td'
-      ],
-      ALLOWED_ATTR: ['style', 'class', 'colspan', 'rowspan']
-    });
-
-  const escapeHtml = (str) => {
-    if (!str && str !== 0) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  };
-
-  const splitTableRowCells = (line) => {
-    const trimmed = String(line || '').trim().replace(/^\|/, '').replace(/\|$/, '');
-    return trimmed.split('|').map((c) => c.trim());
-  };
-
-  const isTableSeparatorLine = (line) => {
-    if (!line || !line.includes('|')) return false;
-    const cells = splitTableRowCells(line);
-    if (!cells.length) return false;
-    return cells.every((c) => /^:?-{3,}:?$/.test(c));
-  };
-
-  const getAlignFromSeparator = (sepCell) => {
-    const cell = String(sepCell || '').trim();
-    if (cell.startsWith(':') && cell.endsWith(':')) return 'center';
-    if (cell.endsWith(':')) return 'right';
-    return 'left';
-  };
-
-  const convertPipeTablesToHtml = (text) => {
-    const lines = String(text || '').split('\n');
-    const out = [];
-
-    for (let i = 0; i < lines.length; i += 1) {
-      const headerLine = lines[i];
-      const separatorLine = lines[i + 1];
-      const hasHeaderPipes = headerLine && headerLine.includes('|');
-      const canStartTable = hasHeaderPipes && isTableSeparatorLine(separatorLine);
-
-      if (!canStartTable) {
-        out.push(headerLine);
-        continue;
-      }
-
-      const headerCells = splitTableRowCells(headerLine);
-      const alignCells = splitTableRowCells(separatorLine).map(getAlignFromSeparator);
-      const rowLines = [];
-      let j = i + 2;
-
-      while (j < lines.length && lines[j] && lines[j].includes('|')) {
-        rowLines.push(lines[j]);
-        j += 1;
-      }
-
-      const thead = `<thead><tr>${headerCells
-        .map((cell, idx) => `<th style="text-align:${alignCells[idx] || 'left'};">${cell}</th>`)
-        .join('')}</tr></thead>`;
-
-      const tbodyRows = rowLines
-        .map((row) => {
-          const cells = splitTableRowCells(row);
-          return `<tr>${headerCells
-            .map((_, idx) => `<td style="text-align:${alignCells[idx] || 'left'};">${cells[idx] || ''}</td>`)
-            .join('')}</tr>`;
-        })
-        .join('');
-
-      out.push(`<table class="markdown-table">${thead}<tbody>${tbodyRows}</tbody></table>`);
-      i = j - 1;
-    }
-
-    return out.join('\n');
-  };
-
-  const renderMarkdownToHtml = (markdown) => {
-    if (!markdown && markdown !== 0) return '';
-
-    const codeBlocks = [];
-    let working = String(markdown).replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (m, lang, code) => {
-      const idx = codeBlocks.length;
-      const safeCode = escapeHtml(code);
-      const langNorm = (lang || '').toLowerCase();
-      const langClass = lang ? `language-${langNorm}` : '';
-      let codeHtml = `<pre><code class="${langClass}" style="white-space: pre-wrap;">${safeCode}</code></pre>`;
-      if (langNorm === 'html' || langNorm === 'xml') {
-        codeHtml = `<div class="code-section"><div class="code-title">HTML</div>${codeHtml}</div>`;
-      } else if (langNorm === 'css') {
-        codeHtml = `<div class="code-section"><div class="code-title">CSS</div>${codeHtml}</div>`;
-      } else if (langNorm === 'js' || langNorm === 'javascript') {
-        codeHtml = `<div class="code-section"><div class="code-title">JavaScript</div>${codeHtml}</div>`;
-      } else {
-        codeHtml = `<div class="code-section"><div class="code-title">Code</div>${codeHtml}</div>`;
-      }
-      codeBlocks.push(codeHtml);
-      return `%%CODEBLOCK${idx}%%`;
-    });
-
-    const inlineCodes = [];
-    working = working.replace(/`([^`]+)`/g, (m, code) => {
-      const idx = inlineCodes.length;
-      inlineCodes.push(
-        `<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;">${escapeHtml(code)}</code>`
-      );
-      return `%%INLINECODE${idx}%%`;
-    });
-
-    working = escapeHtml(working);
-
-    working = working.replace(/\*\*\*([\s\S]+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-    working = working.replace(/___([\s\S]+?)___/g, '<strong><em>$1</em></strong>');
-    working = working.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
-    working = working.replace(/__([^\n]+?)__/g, '<strong>$1</strong>');
-    working = working.replace(/\*([^\n*][^\n]*?)\*/g, '<em>$1</em>');
-    working = working.replace(/_([^\n_][^\n]*?)_/g, '<em>$1</em>');
-
-    working = working.replace(/^ {0,3}(#{1,6})\s*(.+)$/gm, (m, hashes, title) => {
-      const level = Math.min(hashes.length, 6);
-      return `<h${level}>${title.trim()}</h${level}>`;
-    });
-
-    working = working.replace(/(^((?:[ \t]*[-\*]\s+.*\n?)+))/gm, (group) => {
-      const lines = group.split(/\n/).filter(Boolean);
-      const items = lines
-        .map((line) => line.replace(/^[ \t]*[-\*]\s+/, ''))
-        .map((item) => `<li>${item}</li>`)
-        .join('');
-      return `<ul>${items}</ul>`;
-    });
-
-    working = working.replace(/(^((?:[ \t]*\d+\.\s+.*\n?)+))/gm, (group) => {
-      const lines = group.split(/\n/).filter(Boolean);
-      const items = lines
-        .map((line) => line.replace(/^[ \t]*\d+\.\s+/, ''))
-        .map((item) => `<li>${item}</li>`)
-        .join('');
-      return `<ol>${items}</ol>`;
-    });
-
-    working = working.replace(/^---+$/gm, '<hr/>');
-    working = convertPipeTablesToHtml(working);
-
-    const hasDoubleNewline = /\n\s*\n/.test(working);
-    if (hasDoubleNewline) {
-      const parts = working.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 0);
-      working = parts
-        .map((p) => {
-          if (/^<(h[1-6]|ul|ol|pre|div|blockquote|table|hr)/i.test(p)) return p;
-          const withBreaks = p.replace(/\n/g, '<br/>');
-          const isVerbatim = !withBreaks.includes('<strong>');
-          return `<p class="${isVerbatim ? 'verbatim' : ''}">${withBreaks}</p>`;
-        })
-        .join('\n');
-    } else {
-      const lines = working.split('\n').map((l) => l.trim()).filter(Boolean);
-      working = lines
-        .map((l) => {
-          if (/^<(h[1-6]|ul|ol|pre|div|blockquote|table|hr)/i.test(l)) return l;
-          const isVerbatim = !l.includes('<strong>');
-          return `<p class="${isVerbatim ? 'verbatim' : ''}">${l}</p>`;
-        })
-        .join('\n');
-    }
-
-    working = working.replace(/%%INLINECODE(\d+)%%|@@INLINE_CODE_(\d+)@@|@@INLINECODE(\d+)@@/g, (m, i1, i2, i3) => {
-      const idx = Number(i1 ?? i2 ?? i3);
-      return inlineCodes[idx] || '';
-    });
-    working = working.replace(/%%CODEBLOCK(\d+)%%|@@CODE_BLOCK_(\d+)@@|@@CODEBLOCK(\d+)@@/g, (m, i1, i2, i3) => {
-      const idx = Number(i1 ?? i2 ?? i3);
-      return codeBlocks[idx] || '';
-    });
-
-    return working;
-  };
-
-  const getLlmName = () => (localStorage.getItem('llm_nom') || 'openai').toLowerCase();
+  const getLlmName = () => (localStorage.getItem('llm_nom') || 'openai').toLowerCase().trim();
   const isClaudeLlm = (llm) => String(llm || '').includes('claude');
 
   const extractAssistantMessage = (data) => {
-    const possibleMessages = [
-      data?.message,
-      data?.response,
-      data?.assistant_message,
-      data?.final_response,
-      data?.data?.message,
-      data?.data?.response,
-      data?.data?.assistant_message,
-      data?.data?.final_response,
-    ];
-
-    return possibleMessages.find(
-      (value) => typeof value === 'string' && value.trim().length > 0
-    ) || null;
-  };
-
-  const normalizeText = (value) =>
-    String(value || '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
-
-  const isEchoedUserPrompt = (candidateText, userPrompt) => {
-    const candidate = normalizeText(candidateText);
-    const promptNorm = normalizeText(userPrompt);
-    if (!candidate || !promptNorm) return false;
-    return candidate === promptNorm;
-  };
-
-  const isAssistantRole = (msg) => {
-    const role = normalizeText(msg?.role);
-    if (!role) return true; // backward compatibility when role is missing
-    return !(role === 'user' || role === 'human');
+    const candidates = [data?.message, data?.response, data?.assistant_message, data?.final_response];
+    return candidates.find(v => typeof v === 'string' && v.trim().length > 0) || null;
   };
 
   const countAssistantMessages = (list) => {
     if (!Array.isArray(list)) return 0;
-    return list.filter(
-      (m) =>
-        isAssistantRole(m) &&
-        typeof m?.content === 'string' &&
-        m.content.trim().length > 0
-    ).length;
+    return list.filter(m => typeof m?.content === 'string' && m.content.trim().length > 0).length;
   };
 
-  const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const waitMs = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  const waitForClaudeFinalFromRefresh = async (intermediateText = null, userPrompt = null, maxDurationMs = 30 * 60 * 1000) => {
+  const waitForClaudeFinalFromRefresh = async (intermediateText = null, maxDurationMs = 30 * 60 * 1000) => {
     const started = Date.now();
     const baseCount = countAssistantMessages(displayedMessagesRef.current);
     const baselineText = (intermediateText || '').trim();
@@ -379,30 +142,20 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     while (Date.now() - started < maxDurationMs) {
       try {
         if (typeof refreshMessages === 'function') {
-          await Promise.resolve(refreshMessages(false));
+          await Promise.resolve(refreshMessages(true));
         }
       } catch (e) {
-        // ignore periodic refresh errors and keep waiting
+        // ignore periodic refresh errors
       }
 
       await waitMs(400);
       const current = displayedMessagesRef.current || [];
       const newCount = countAssistantMessages(current);
-      const latest = [...current].reverse().find(
-        (m) =>
-          isAssistantRole(m) &&
-          typeof m?.content === 'string' &&
-          m.content.trim().length > 0
-      );
+      const latest = [...current].reverse().find(m => typeof m?.content === 'string' && m.content.trim().length > 0);
       const latestText = latest?.content?.trim() || '';
 
-      if (latestText && isEchoedUserPrompt(latestText, userPrompt)) {
-        await waitMs(5000);
-        continue;
-      }
-
       if (newCount > baseCount) return latestText || null;
-      if (baselineText && latestText && normalizeText(latestText) !== normalizeText(baselineText)) return latestText;
+      if (baselineText && latestText && latestText !== baselineText) return latestText;
 
       await waitMs(5000);
     }
@@ -410,32 +163,69 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     return null;
   };
 
-  const streamAssistantMessage = (messageText) => {
-    const chunks = String(messageText).split(/\r?\n/);
-    const msgId = Date.now();
-    setStreamingSegments(chunks);
-    setStreamingMessageId(msgId);
-    setStreamingIndex(0);
-    setDisplayedMessages(prev => [...prev, { id: msgId, content: "" }]);
+  // Helper: detecte si la réponse contient du HTML (simple heuristique)
+  const isHTMLContent = (text) => {
+    if (!text) return false;
+    return /<\/?[a-z][\s\S]*>/i.test(text);
   };
 
+  // Effet typewriter
+  useEffect(() => {
+    let intervalId;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden && typewriterMsg) {
+        setTypewriterContent(typewriterMsg);
+        setTypewriterMsg(null);
+        setDisplayedMessages(prev => [
+          ...prev,
+          { id: Date.now(), content: typewriterMsg, role: "assistant" },
+        ]);
+        setWaitingForResponse(false);
+        setOptimisticUserMsg(null);
+      }
+    };
+
+    if (typewriterMsg && typewriterContent.length < typewriterMsg.length) {
+      intervalId = setInterval(() => {
+        setTypewriterContent(prev => typewriterMsg.slice(0, prev.length + 1));
+      }, 7);
+    }
+
+    if (typewriterMsg && typewriterContent.length === typewriterMsg.length) {
+      setTimeout(() => {
+        setDisplayedMessages(prev => [
+          ...prev,
+          { id: Date.now(), content: typewriterMsg, role: "assistant" },
+        ]);
+        setTypewriterMsg(null);
+        setTypewriterContent("");
+        setWaitingForResponse(false);
+        setOptimisticUserMsg(null);
+        refreshMessages(false);
+      }, 500);
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [typewriterMsg, typewriterContent, refreshMessages]);
 
 
   // Envoi message utilisateur
-  const sendMessage = async (textToSend) => {
-  const messageText = textToSend || prompt;
-  if (!messageText || !conversationId) return;
+  const sendMessage = async () => {
+  if (!prompt || !conversationId) return;
+  const llmNom = getLlmName();
 
-  const originalPrompt = messageText; // Keep a copy to restore on error
-  // immediately show user message in history (even before server
-  // confirms) so the question never disappears
-  setDisplayedMessages(prev => [...prev, { id: Date.now(), prompt: messageText }]);
+  const originalPrompt = prompt; // Keep a copy to restore on error
   setSending(true);
   setLocalError("");
+  setOptimisticUserMsg({ prompt: originalPrompt });
   setWaitingForResponse(true);
-  if (!textToSend) {
-    setPrompt(""); // Clear input for better UX (only if not from PromptSelector)
-  }
+  setPrompt(""); // Clear input for better UX
 
   setTimeout(() => {
     if (messagesEndRef.current) {
@@ -446,17 +236,17 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 360000); // 6-minute timeout
 
- fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined`, {
+ fetch(`http://localhost.com/ia/public/api/restitution/addMessageToConversation_ined`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${token}`,
   },
   body: JSON.stringify({
-    message: messageText,
+    message: prompt,
     conversation_id: conversationId,
     projet_name: projectName,
-    llm_nom : getLlmName()
+    llm_nom: llmNom,
   }),
   // signal: controller.signal,
 })
@@ -476,41 +266,28 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         clearInterval(window.__chat_polling_interval);
         window.__chat_polling_interval = null;
       }
-      const llmNom = getLlmName();
-      if (!isClaudeLlm(llmNom)) {
-        console.log('[OPENAI] addMessageToConversation_ined response:', data);
-        await pollForResponse(data.response_id, messageText); // Start polling for response
-      } else {
-        console.log('[CLAUDE] addMessageToConversation_ined response:', data);
-        const directResponse = extractAssistantMessage(data);
-        console.log('[CLAUDE] extracted assistant message:', directResponse);
-        if (data?.is_final === true && directResponse) {
-          streamAssistantMessage(directResponse);
-        } else {
-          if (directResponse && !isEchoedUserPrompt(directResponse, messageText)) {
-            setDisplayedMessages(prev => [...prev, { id: Date.now(), content: directResponse }]);
-          }
-          const finalText = await waitForClaudeFinalFromRefresh(directResponse, messageText);
-          if (
-            finalText &&
-            !isEchoedUserPrompt(finalText, messageText) &&
-            (!directResponse || normalizeText(finalText) !== normalizeText(directResponse))
-          ) {
-            streamAssistantMessage(finalText);
-          } else if (!finalText && !directResponse) {
-            setWaitingForResponse(false);
-            setLocalError("Aucune réponse finale Claude reçue dans le délai imparti.");
-          } else {
-            setWaitingForResponse(false);
-          }
-        }
-      }
+
+       if (!isClaudeLlm(llmNom)) {
+         await pollForResponse(data.response_id, prompt);
+       } else {
+         const directResponse = extractAssistantMessage(data);
+         if (directResponse) {
+           setDisplayedMessages(prev => [...prev, { id: Date.now(), content: directResponse }]);
+         }
+         if (data?.is_final !== true) {
+           const finalText = await waitForClaudeFinalFromRefresh(directResponse);
+           if (finalText && (!directResponse || finalText !== directResponse)) {
+             setDisplayedMessages(prev => [...prev, { id: Date.now(), content: finalText }]);
+           }
+         }
+         setWaitingForResponse(false);
+         setOptimisticUserMsg(null);
+       }
     } else {
       setLocalError("Erreur lors de l'ajout du message");
+      setOptimisticUserMsg(null);
       setWaitingForResponse(false);
-      if (!textToSend) {
-        setPrompt(originalPrompt); // Restore user input on failure
-      }
+      setPrompt(originalPrompt); // Restore user input on failure
     }
   })
   .catch(err => {
@@ -519,6 +296,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     } else {
       setLocalError("Erreur d'envoi : " + err.message);
     }
+    setOptimisticUserMsg(null);
     setWaitingForResponse(false);
     setPrompt(originalPrompt); // Restore user input on error
   })
@@ -535,17 +313,11 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   // Envoi message prédéfini
   const sendPredefinedPrompt = async (predefinedPromptText) => {
     if (!predefinedPromptText || !conversationId) return;
+    const llmNom = getLlmName();
 
-    // Replace placeholder with selected file name if available
-    let finalPrompt = predefinedPromptText;
-    if (selectedFile) {
-      finalPrompt = predefinedPromptText.replace('Intensif avant.docx', selectedFile.nom_fichier);
-    }
-
-    // show the chosen prompt as a message as soon as user clicks
-    setDisplayedMessages(prev => [...prev, { id: Date.now(), prompt: finalPrompt }]);
     setSending(true);
     setLocalError("");
+    setOptimisticUserMsg({ prompt: predefinedPromptText });
     setWaitingForResponse(true);
 
     setTimeout(() => {
@@ -557,17 +329,17 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 360000); // 6-minute timeout
 
-    fetch(`http://localhost/ia/public/api/restitution/addMessageToConversation_ined`, {
+    fetch(`http://localhost.com/ia/public/api/restitution/addMessageToConversation_ined`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({
-        message: finalPrompt,
+        message: predefinedPromptText,
         conversation_id: conversationId,
         projet_name: projectName,
-        llm_nom : getLlmName()
+        llm_nom: llmNom,
       }),
     })
       .then(res => {
@@ -585,37 +357,26 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             clearInterval(window.__chat_polling_interval);
             window.__chat_polling_interval = null;
           }
-          const llmNom = getLlmName();
+
           if (!isClaudeLlm(llmNom)) {
-            console.log('[OPENAI] addMessageToConversation_ined response (predefined prompt):', data);
-            await pollForResponse(data.response_id, finalPrompt);
+            await pollForResponse(data.response_id, predefinedPromptText);
           } else {
-            console.log('[CLAUDE] addMessageToConversation_ined response (predefined prompt):', data);
             const directResponse = extractAssistantMessage(data);
-            console.log('[CLAUDE] extracted assistant message (predefined prompt):', directResponse);
-            if (data?.is_final === true && directResponse) {
-              streamAssistantMessage(directResponse);
-            } else {
-              if (directResponse && !isEchoedUserPrompt(directResponse, finalPrompt)) {
-                setDisplayedMessages(prev => [...prev, { id: Date.now(), content: directResponse }]);
-              }
-              const finalText = await waitForClaudeFinalFromRefresh(directResponse, finalPrompt);
-              if (
-                finalText &&
-                !isEchoedUserPrompt(finalText, finalPrompt) &&
-                (!directResponse || normalizeText(finalText) !== normalizeText(directResponse))
-              ) {
-                streamAssistantMessage(finalText);
-              } else if (!finalText && !directResponse) {
-                setWaitingForResponse(false);
-                setLocalError("Aucune réponse finale Claude reçue dans le délai imparti.");
-              } else {
-                setWaitingForResponse(false);
+            if (directResponse) {
+              setDisplayedMessages(prev => [...prev, { id: Date.now(), content: directResponse }]);
+            }
+            if (data?.is_final !== true) {
+              const finalText = await waitForClaudeFinalFromRefresh(directResponse);
+              if (finalText && (!directResponse || finalText !== directResponse)) {
+                setDisplayedMessages(prev => [...prev, { id: Date.now(), content: finalText }]);
               }
             }
+            setWaitingForResponse(false);
+            setOptimisticUserMsg(null);
           }
         } else {
           setLocalError("Erreur lors de l'ajout du message");
+          setOptimisticUserMsg(null);
           setWaitingForResponse(false);
         }
       })
@@ -625,6 +386,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         } else {
           setLocalError("Erreur d'envoi : " + err.message);
         }
+        setOptimisticUserMsg(null);
         setWaitingForResponse(false);
       })
       .finally(() => {
@@ -640,7 +402,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     // const timeoutId = setTimeout(() => controller.abort(), 180000); // Timeout après 3 minutes
 
     try {
-      const res = await fetch(`http://localhost/ia/public/api/restitution/getFinalResponseAssistant`, {
+      const res = await fetch(`http://localhost.com/ia/public/api/restitution/getFinalResponseAssistant`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -655,17 +417,15 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       if (!res.ok) throw new Error("Polling échoué");
 
       const data = await res.json();
-      console.log('[OPENAI] getFinalResponseAssistant raw response:', data);
+      console.log("mmmmm first",data)
       if (data.success && data.message) {
-        console.log('[OPENAI] getFinalResponseAssistant final message:', data.message);
-
-        // prepare streaming: split by lines and add empty message placeholder
-        const chunks = String(data.message).split(/\r?\n/);
-        const msgId = Date.now();
-        setStreamingSegments(chunks);
-        setStreamingMessageId(msgId);
-        setStreamingIndex(0);
-        setDisplayedMessages(prev => [...prev, { id: msgId, content: "" }]);
+        setOptimisticUserMsg(null);
+        setWaitingForResponse(false);
+        console.log("mmmmm",data.message)
+        if (!typewriterMsg) {
+          setTypewriterMsg(data.message);
+          setTypewriterContent("");
+        }
 
         clearInterval(window.__chat_polling_interval); // Clear polling interval
         window.__chat_polling_interval = null;
@@ -677,42 +437,16 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         setLocalError("Erreur polling : " + err.message);
       }
       setWaitingForResponse(false);
+      setOptimisticUserMsg(null);
       clearInterval(window.__chat_polling_interval); // Clear polling interval
       window.__chat_polling_interval = null;
     }
 
-
+    setDisplayedMessages([...displayedMessages,{id:new Date().getTime(),prompt}])
+    
   // }, 120000); // Polling every 2 minutes
 };
 
-
-  // effect: gradually append segments to the streaming message
-  useEffect(() => {
-    if (streamingMessageId !== null && streamingSegments) {
-      if (streamingIndex < streamingSegments.length) {
-        const timeout = setTimeout(() => {
-          setDisplayedMessages(prev => prev.map(m => {
-            if (m.id === streamingMessageId) {
-              const sep = m.content ? '\n' : '';
-              // when the first segment appears, hide the global loader/spinner
-              if (!m.content) {
-                setWaitingForResponse(false);
-              }
-              return { ...m, content: m.content + sep + streamingSegments[streamingIndex] };
-            }
-            return m;
-          }));
-          setStreamingIndex(i => i + 1);
-        }, 250);
-        return () => clearTimeout(timeout);
-      } else {
-        // done streaming
-        setStreamingMessageId(null);
-        setStreamingSegments(null);
-        setWaitingForResponse(false);
-      }
-    }
-  }, [streamingIndex, streamingMessageId, streamingSegments]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -724,15 +458,55 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       clearInterval(window.__chat_polling_interval);
       window.__chat_polling_interval = null;
     }
-    // clear any streaming in progress
-    setStreamingMessageId(null);
-    setStreamingSegments(null);
-    setStreamingIndex(0);
+    if (typewriterMsg && typewriterContent) {
+      setDisplayedMessages(prev => {
+        const alreadyExists = prev.some(
+          msg => msg.content === typewriterContent
+        );
+        if (!alreadyExists) {
+          return [
+            ...prev,
+            { id: Date.now(), content: typewriterContent, role: "assistant" }
+          ];
+        }
+        return prev;
+      });
+    }
+    setTypewriterMsg(null);
+    setTypewriterContent("");
     setWaitingForResponse(false);
+    setOptimisticUserMsg(null);
     setLocalError("Génération arrêtée.");
   };
 
+  // Scroll pendant génération
+  useEffect(() => {
+    if (typewriterMsg && messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [typewriterContent, typewriterMsg]);
 
+  // When streaming HTML into the iframe, also scroll the iframe's inner document to bottom
+  useEffect(() => {
+    if (!typewriterMsg) return;
+    if (!isHTMLContent(typewriterMsg)) return;
+
+    // find the last iframe preview (the one for the streaming message)
+    const iframes = document.querySelectorAll('.html-preview-iframe');
+    if (!iframes || iframes.length === 0) return;
+    const iframe = iframes[iframes.length - 1];
+    if (!iframe) return;
+
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow.document;
+      const scrollHeight = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
+      // scroll the iframe's window to bottom smoothly
+      iframe.contentWindow.scrollTo({ top: scrollHeight, behavior: 'smooth' });
+    } catch (err) {
+      // accessing iframe might fail if sandbox/origin changes; ignore silently
+      // console.warn('Could not scroll iframe:', err);
+    }
+  }, [typewriterContent, typewriterMsg]);
 
   // Also ensure that when a full HTML message is appended we scroll its iframe to bottom
   useEffect(() => {
@@ -771,6 +545,111 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const downloadSelectedAsWord = () => {
     if (!selectedMessages || selectedMessages.length === 0) return;
 
+    // small helper: escape HTML special chars
+    const escapeHtml = (str) => {
+      if (!str && str !== 0) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    };
+
+    // Convert markdown content to simple HTML but preserve code blocks and inline code,
+    // convert headings and lists, group code blocks by language, and convert emphasis.
+    const renderContentHtml = (markdown) => {
+      if (!markdown && markdown !== 0) return '';
+
+      const codeBlocks = [];
+      // 1) extract fenced code blocks to placeholders (escape their contents)
+      let working = String(markdown).replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (m, lang, code) => {
+        const idx = codeBlocks.length;
+        const safeCode = escapeHtml(code);
+        const langNorm = (lang || '').toLowerCase();
+        const langClass = lang ? `language-${langNorm}` : '';
+        let codeHtml = `<pre><code class="${langClass}" style="white-space: pre-wrap;">${safeCode}</code></pre>`;
+        if (langNorm === 'html' || langNorm === 'xml') {
+          codeHtml = `<div class="code-section"><div class="code-title">HTML</div>${codeHtml}</div>`;
+        } else if (langNorm === 'css') {
+          codeHtml = `<div class="code-section"><div class="code-title">CSS</div>${codeHtml}</div>`;
+        } else if (langNorm === 'js' || langNorm === 'javascript') {
+          codeHtml = `<div class="code-section"><div class="code-title">JavaScript</div>${codeHtml}</div>`;
+        } else {
+          codeHtml = `<div class="code-section"><div class="code-title">Code</div>${codeHtml}</div>`;
+        }
+        codeBlocks.push(codeHtml);
+        return `<!--CODE_BLOCK_${idx}-->`;
+      });
+
+      // 2) extract inline code to placeholders
+      const inlineCodes = [];
+      working = working.replace(/`([^`]+)`/g, (m, code) => {
+        const idx = inlineCodes.length;
+        inlineCodes.push(`<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;">${escapeHtml(code)}</code>`);
+        return `<!--INLINE_CODE_${idx}-->`;
+      });
+
+      // 3) emphasis: bold/italic (strong/em)
+      // handle bold+italic
+      working = working.replace(/\*\*\*([\s\S]+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+      working = working.replace(/___([\s\S]+?)___/g, '<strong><em>$1</em></strong>');
+      // bold
+      working = working.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
+      working = working.replace(/__([^\n]+?)__/g, '<strong>$1</strong>');
+      // italic
+      working = working.replace(/\*([^\n*][^\n]*?)\*/g, '<em>$1</em>');
+      working = working.replace(/_([^\n_][^\n]*?)_/g, '<em>$1</em>');
+
+      // 4) headings
+      working = working.replace(/^ {0,3}(#{1,6})\s*(.+)$/gm, (m, hashes, title) => {
+        const level = Math.min(hashes.length, 6);
+        return `<h${level}>${title.trim()}</h${level}>`;
+      });
+
+      // 5) unordered lists
+      working = working.replace(/(^((?:[ \t]*[-\*]\s+.*\n?)+))/gm, (group) => {
+        const lines = group.split(/\n/).filter(Boolean);
+        const items = lines.map(line => line.replace(/^[ \t]*[-\*]\s+/, ''))
+          .map(item => `<li>${item}</li>`).join('');
+        return `<ul>${items}</ul>`;
+      });
+
+      // 6) ordered lists
+      working = working.replace(/(^((?:[ \t]*\d+\.\s+.*\n?)+))/gm, (group) => {
+        const lines = group.split(/\n/).filter(Boolean);
+        const items = lines.map(line => line.replace(/^[ \t]*\d+\.\s+/, ''))
+          .map(item => `<li>${item}</li>`).join('');
+        return `<ol>${items}</ol>`;
+      });
+
+      // 7) paragraphs: split on double newlines
+      const hasDoubleNewline = /\n\s*\n/.test(working);
+
+      if (hasDoubleNewline) {
+        const parts = working.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 0);
+        working = parts.map(p => {
+          if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(p)) return p;
+          const withBreaks = p.replace(/\n/g, '<br/>');
+          const isVerbatim = !withBreaks.includes('<strong>');
+          return `<p class="${isVerbatim ? 'verbatim' : ''}">${withBreaks}</p>`;
+        }).join('\n');
+      } else {
+        const lines = working.split('\n').map(l => l.trim()).filter(Boolean);
+        working = lines.map(l => {
+          if (/^<(h[1-6]|ul|ol|pre|div|blockquote)/i.test(l)) return l;
+          const isVerbatim = !l.includes('<strong>');
+          return `<p class="${isVerbatim ? 'verbatim' : ''}">${l}</p>`;
+        }).join('\n');
+      }
+
+      // 8) re-insert inline code and code blocks
+      working = working.replace(/<!--INLINE_CODE_(\d+)-->/g, (m, i) => inlineCodes[Number(i)] || '');
+      working = working.replace(/<!--CODE_BLOCK_(\d+)-->/g, (m, i) => codeBlocks[Number(i)] || '');
+
+      return working;
+    };
+
     // collect messages in original order
     const selected = displayedMessages
       .filter(m => selectedMessages.includes(m.id) && m.content)
@@ -799,29 +678,11 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           pre, code { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; margin: 0; padding: 0; }
           .message { page-break-inside: avoid; }
           .message + .message { margin-top: 10pt; }
-          table.markdown-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 8pt 0 12pt 0;
-            table-layout: fixed;
-          }
-          table.markdown-table th,
-          table.markdown-table td {
-            border: 1pt solid #444;
-            padding: 5pt 6pt;
-            vertical-align: top;
-            word-break: break-word;
-            text-align: left;
-          }
-          table.markdown-table th {
-            background: #efefef;
-            font-weight: 700;
-          }
         </style>
       <div class="document">`;
     selected.forEach((m, idx) => {
-      const rendered = renderMarkdownToHtml(m.content);
-      const safe = sanitizeRichHtml(rendered);
+      const rendered = renderContentHtml(m.content);
+      const safe = DOMPurify.sanitize(rendered, { ALLOWED_TAGS: ['div','span','p','pre','code','br','ul','ol','li','strong','em','h1','h2','h3'], ALLOWED_ATTR: ['class', 'style'] });
       bodyHtml += `
         <div class="message">
           <div class="message-content">${safe}</div>
@@ -846,14 +707,10 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
   const handleFileChange = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    // accept only doc, docx, or pdf
-    const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/pdf'];
-    const hasValidType = allowed.includes(file.type);
-    const hasValidExtension = /\.(?:docx?|pdf)$/i.test(file.name);
-    // Accept if either type is valid OR extension is valid (allows files without extension if type is detected)
-    // Also accept if type is empty and extension is valid (some systems don't set MIME type for PDF)
-    if (!hasValidType && !hasValidExtension) {
-      setUploadError('Format non supporté — choisissez .doc, .docx ou .pdf');
+    // accept only doc or docx
+    const allowed = ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    if (!allowed.includes(file.type) && !/\.docx?$/.test(file.name)) {
+      setUploadError('Format non supporté — choisissez .doc ou .docx');
       return;
     }
     setUploadError("");
@@ -867,10 +724,9 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
     setUploadError("");
     setUploadedInfo(null);
 
-    const url = 'http://localhost/ia/public/api/charger_fichier_openai';
+    const url = 'http://localhost.com/ia/public/api/charger_fichier_openai';
     const form = new FormData();
     form.append('fichier', file);
-    form.append('llm_nom', getLlmName());
 
     const xhr = new XMLHttpRequest();
     xhrRef.current = xhr;
@@ -972,8 +828,8 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
                 setFilesLoading(true);
                 setFilesError("");
                 try {
-                  const query = `{vector_stores(projet_id:${projectId}){id,nom_fichier}}`;
-                  const url = `http://localhost/ia/public/graphql?query=${encodeURIComponent(query)}`;
+                  const query = '{vector_stores(projet_id:8){id,nom_fichier}}';
+                  const url = `http://localhost.com/ia/public/graphql?query=${encodeURIComponent(query)}`;
                   const res = await fetch(url, {
                     headers: {
                       'Content-Type': 'application/json',
@@ -997,7 +853,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             <span>Fichiers</span>
           </button>
 
-          {/* Upload Word or PDF file */}
+          {/* Upload Word file */}
           <button
             className="upload-btn"
             onClick={() => {
@@ -1006,11 +862,11 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
               if (fileInputRef.current) fileInputRef.current.value = null;
               fileInputRef.current?.click();
             }}
-            title="Uploader un fichier Word ou PDF"
+            title="Uploader un fichier Word"
             disabled={uploading}
           >
             📁
-            <span>Uploader Word/PDF</span>
+            <span>Uploader Word</span>
           </button>
 
           {/* Download Word / Select mode */}
@@ -1048,7 +904,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           <input
             ref={fileInputRef}
             type="file"
-            accept=".doc,.docx,.pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"
+            accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             style={{ display: 'none' }}
             onChange={handleFileChange}
           />
@@ -1075,25 +931,9 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
           {!filesLoading && !filesError && filesList && filesList.length === 0 && (
             <div className="files-empty">Aucun fichier disponible</div>
           )}
-          {selectedFile && (
-            <div style={{ padding: '12px', marginBottom: '12px', backgroundColor: '#e0e7ff', borderRadius: '8px', borderLeft: '4px solid #6366f1' }}>
-              <strong>Fichier sélectionné:</strong> {selectedFile.nom_fichier}
-            </div>
-          )}
           <ul className="files-list">
             {filesList.map(f => (
-              <li 
-                className="file-item" 
-                key={f.id}
-                onClick={() => setSelectedFile(f)}
-                style={{
-                  cursor: 'pointer',
-                  backgroundColor: selectedFile?.id === f.id ? '#dbeafe' : 'transparent',
-                  borderLeft: selectedFile?.id === f.id ? '4px solid #3b82f6' : 'none',
-                  paddingLeft: selectedFile?.id === f.id ? '12px' : '16px',
-                  transition: 'all 0.2s'
-                }}
-              >
+              <li className="file-item" key={f.id}>
                 <div className="file-name">{f.nom_fichier || `#${f.id}`}</div>
                 <div className="file-id">ID: {f.id}</div>
               </li>
@@ -1102,8 +942,8 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         </div>
       </div>
       <div className="chat-title-bar">
-        <h1 className="chat-title-gradient">PROJET {projectName && `- ${projectName}`}</h1>
-        {/* <img src="/agent-restitution.gif" alt="Agent de restitution" className="chat-title-gif" /> */}
+        <h1 className="chat-title-gradient">AGENT IA PROJET {projectName && `- ${projectName}`}</h1>
+        <img src="/agent-restitution.gif" alt="Agent de restitution" className="chat-title-gif" />
       </div>
       <div className="chat-header">
         {conversationId ? `Conversation #${conversationIdInt}` : 'Aucun chat sélectionné'}
@@ -1170,14 +1010,9 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
         {displayedMessages?.sort((a, b) => a.id - b.id)?.map((msg) => (
           <div key={msg.id} className="message">
             {msg.prompt && (
-              <div className="user-message styled-user-message">
-                <strong style={{ fontSize: '1.1em', color: '#4f46e5' }}>Vous :</strong> 
-                <span style={{ fontSize: '1.05em', fontWeight: '600', color: '#030806', marginLeft: '8px', lineHeight: '1.6' }}>
-                  {msg.prompt}
-                </span>
-              </div>
+              <div className="user-message styled-user-message"><strong>Vous :</strong> {msg.prompt}</div>
             )}
-            {msg.content && isAssistantRole(msg) && (
+            {msg.content && (
               <div className="ai-message styled-ai-message">
                 {selectMode && (
                   <div className="message-checkbox">
@@ -1190,20 +1025,29 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
                 )}
                 <strong>Agent IA :</strong>
                 <div className="formatted-content">
-                  {isHTMLContent(msg.content) ? (
-                    <div dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(msg.content) }} />
-                  ) : (
-                    <div dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(renderMarkdownToHtml(msg.content)) }} />
-                  )}
+                  {/* ✅ Rendu Markdown à la place du split en phrases */}
+                  <ReactMarkdown >{msg.content}</ReactMarkdown>
                 </div>
               </div>
             )}
           </div>
         ))}
-        {waitingForResponse && (
+        {optimisticUserMsg && (
+          <div className="message">
+            <div className="user-message styled-user-message"><strong>Vous :</strong> {optimisticUserMsg.prompt}</div>
+          </div>
+        )}
+        {waitingForResponse && !typewriterMsg && (
           <div className="ai-message ai-thinking styled-ai-thinking">
-            <span className="spinner" />
             <span className="thinking-dots">L'IA réfléchit<span className="dot">.</span><span className="dot">.</span><span className="dot">.</span></span>
+          </div>
+        )}
+        {typewriterMsg && (
+          <div className="ai-message styled-ai-message">
+            <strong>Agent IA :</strong>
+            <div className="formatted-content">
+              <ReactMarkdown >{typewriterContent}</ReactMarkdown>
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -1228,7 +1072,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       {(uploadOpen || uploading || uploadedInfo || uploadError) && (
         <div className="upload-modal">
           <div className="upload-card">
-            <h3>Upload de fichier Word ou PDF</h3>
+            <h3>Upload de fichier Word</h3>
             {uploading && (
               <>
                 <div className="upload-progress">
@@ -1255,8 +1099,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
       )}
 
       {/* Section prompts prédéfinis */}
-      {/* {conversationId && displayedMessages.length === 0 && projectName === 'AGENT-FT' && (
-        
+      {conversationId && displayedMessages.length === 0 && (
         <div className="predefined-prompts-section">
           <h3 className="predefined-prompts-title">Prompts recommandés</h3>
           <div className="predefined-prompts-grid">
@@ -1273,7 +1116,7 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             ))}
           </div>
         </div>
-      )} */}
+      )}
 
       {conversationId && (
         <div className="chat-input" style={{ position: 'relative' }}>
@@ -1289,10 +1132,10 @@ const ChatWindow = ({ conversationId, messages, loading, error, refreshMessages,
             }}
             placeholder="Votre message..."
             rows={3}
-            style={{ paddingRight: waitingForResponse ? '40px' : undefined }}
+            style={{ paddingRight: (waitingForResponse || typewriterMsg) ? '40px' : undefined }}
           />
           <button onClick={sendMessage} disabled={sending || !prompt}>Envoyer</button>
-          {waitingForResponse && (
+          {(waitingForResponse || typewriterMsg) && (
             <button
               className="stop-btn stop-btn-input"
               onClick={handleStopGeneration}

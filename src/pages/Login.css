@@ -4,8 +4,8 @@
   align-items: center;
   justify-content: center;
   height: 100vh;
-  /* background: linear-gradient(135deg, #007bff, #6c63ff); Gradient background */
-  background-color: #1e1e2f;
+  /* background: linear-gradient(135deg, var(--accent-start), #6c63ff); Gradient background */
+  background-color: var(--login-bg);
   font-family: 'Roboto', sans-serif; /* Professional font */
   color: #fff;
 }
@@ -29,10 +29,11 @@ h1 {
 }
 
 .login-form {
-  background: #1e1e2f;
+  background: linear-gradient(165deg, var(--login-form-start) 0%, var(--login-form-end) 100%);
   padding: 20px 30px;
-  border-radius: 10px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
   display: flex;
   flex-direction: column;
   gap: 15px;
@@ -40,7 +41,68 @@ h1 {
   max-width: 400px;
 }
 
-input {
+.llm-selector {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.llm-selector-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9ec8ff;
+}
+
+.llm-toggle-wrap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.llm-option {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #d9deff;
+  border-radius: 10px;
+  padding: 10px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.llm-option:hover {
+  transform: translateY(-1px);
+  border-color: #66a8ff;
+}
+
+.llm-option.active {
+  background: linear-gradient(135deg, var(--login-active-start) 0%, var(--login-active-end) 100%);
+  border-color: var(--login-active-border);
+  color: #ffffff;
+  box-shadow: 0 8px 16px rgba(16, 115, 255, 0.35);
+}
+
+.llm-status {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #cbe3ff;
+}
+
+.llm-status svg {
+  font-size: 18px;
+}
+
+.login-form input {
   padding: 12px;
   font-size: 16px;
   border: 1px solid #ccc;
@@ -49,11 +111,11 @@ input {
   transition: border-color 0.3s;
 }
 
-input:focus {
-  border-color: #007bff;
+.login-form input:focus {
+  border-color: var(--accent-start);
 }
 
-select {
+.login-form select {
   padding: 12px;
   font-size: 16px;
   border: 1px solid #520606;
@@ -70,36 +132,36 @@ select {
   padding-right: 30px;
 }
 
-select:hover {
-  border-color: #0056b3;
+.login-form select:hover {
+  border-color: var(--accent-strong-start);
 }
 
-select:focus {
-  border-color: #007bff;
+.login-form select:focus {
+  border-color: var(--accent-start);
   box-shadow: 0 0 5px rgba(0, 123, 255, 0.5);
 }
 
-select:disabled {
+.login-form select:disabled {
   background-color: #f0f0f0;
   color: #999;
   cursor: not-allowed;
 }
 
-select option {
+.login-form select option {
   padding: 10px;
   color: #333;
   background-color: #fff;
 }
 
-select option:hover {
-  background-color: #007bff;
+.login-form select option:hover {
+  background-color: var(--accent-start);
   color: #fff;
 }
 
-button {
+.login-form button[type="submit"] {
   padding: 12px;
   font-size: 16px;
-  background-color: #007bff;
+  background-color: var(--accent-start);
   color: #fff;
   border: none;
   border-radius: 5px;
@@ -107,11 +169,11 @@ button {
   transition: background-color 0.3s;
 }
 
-button:hover {
-  background-color: #0056b3;
+.login-form button[type="submit"]:hover {
+  background-color: var(--accent-strong-start);
 }
 
-button:disabled {
+.login-form button[type="submit"]:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
 }
@@ -121,4 +183,16 @@ button:disabled {
   margin-top: 10px;
   font-size: 14px;
   text-align: center;
+}
+
+@media (max-width: 480px) {
+  .login-form {
+    margin: 0 14px;
+    padding: 18px;
+  }
+
+  .llm-option {
+    font-size: 14px;
+    padding: 10px 6px;
+  }
 }
